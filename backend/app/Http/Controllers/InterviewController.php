@@ -100,7 +100,7 @@ PROMPT;
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $apiKey,
             ])->timeout(60)->post('https://api.openai.com/v1/chat/completions', [
-                'model' => 'gpt-5',
+                'model' => 'gpt-5-mini',
                 'messages' => [
                     ['role' => 'system', 'content' => 'You are a senior technical interviewer with 20+ years of experience.'],
                     ['role' => 'user', 'content' => $prompt],
@@ -343,7 +343,7 @@ PROMPT;
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $apiKey,
             ])->timeout(120)->post('https://api.openai.com/v1/chat/completions', [
-                'model'                 => 'gpt-5',
+                'model'                 => 'gpt-5-mini',
                 'messages'              => $messages,
                 'max_completion_tokens' => 2000
             ]);
@@ -538,7 +538,7 @@ PROMPT;
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $apiKey,
             ])->timeout(180)->post('https://api.openai.com/v1/chat/completions', [
-                'model'                 => 'gpt-5',
+                'model'                 => 'gpt-5-mini',
                 'messages'              => [
                     ['role' => 'system', 'content' => 'You are a world-class technical interviewer and career coach who provides deeply insightful, evidence-based feedback that helps people grow.'],
                     ['role' => 'user', 'content' => $prompt],
@@ -573,7 +573,7 @@ PROMPT;
             return response()->json([
                 'status'   => 'success',
                 'analysis' => $analysis,
-                'model'    => 'gpt-5'
+                'model'    => 'gpt-5-mini'
             ]);
 
         } catch (\Throwable $e) {

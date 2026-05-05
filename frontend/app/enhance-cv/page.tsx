@@ -768,7 +768,8 @@ export default function EnhanceCVPage() {
                   type="file"
                   accept=".pdf,.docx,.txt"
                   onChange={async (e) => {
-                    const file = e.target.files?.[0]
+                    const input = e.target as HTMLInputElement
+                    const file = input.files?.[0]
                     if (!file) return
                     try {
                       const form = new FormData()
@@ -782,10 +783,15 @@ export default function EnhanceCVPage() {
                       const text = data.text || ""
                       setCVText(text)
                       if (text) {
+                        toast.success("CV text extracted successfully")
                         await analyzeWithText(text)
+                      } else {
+                        toast.error("No text was extracted from the file. Please paste your CV text manually.")
                       }
                     } catch (err: any) {
                       toast.error(err.message || "Failed to extract text from file")
+                    } finally {
+                      input.value = ''
                     }
                   }}
                   className="block text-sm"

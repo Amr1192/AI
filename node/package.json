@@ -1,0 +1,16 @@
+{
+  "name": "agentic-interview-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Real-time agentic interviewer using GPT Realtime API",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "dotenv": "^16.4.5",
+    "axios": "^1.7.2"
+  }
+}
