@@ -8,6 +8,7 @@ deps = {
     'openai': 'OpenAI Python SDK',
     'reportlab': 'PDF generation library',
     'pdfplumber': 'PDF text extraction',
+    'pypdf': 'PDF extraction fallback parser',
     'docx': 'DOCX/Word document support (python-docx)',
     'dotenv': 'Environment variable loading (python-dotenv)',
 }

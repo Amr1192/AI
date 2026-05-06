@@ -38,6 +38,7 @@ export default function EnhanceCVPage() {
   const [loading, setLoading] = useState(true)
   const [analyzing, setAnalyzing] = useState(false)
   const [enhancing, setEnhancing] = useState(false)
+  const [uploadingFile, setUploadingFile] = useState(false)
   const [downloadingPdf, setDownloadingPdf] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [isDraftSaving, setIsDraftSaving] = useState(false)
@@ -767,18 +768,26 @@ export default function EnhanceCVPage() {
                 <input
                   type="file"
                   accept=".pdf,.docx,.txt"
+                  disabled={uploadingFile}
                   onChange={async (e) => {
                     const input = e.target as HTMLInputElement
                     const file = input.files?.[0]
                     if (!file) return
                     try {
+                      setUploadingFile(true)
                       const form = new FormData()
                       form.append("file", file)
                       const res = await fetch(`${API_URL}/upload`, {
                         method: "POST",
                         body: form,
                       })
-                      const data = await res.json()
+                      const contentType = res.headers.get("content-type") || ""
+                      const data = contentType.includes("application/json")
+                        ? await res.json()
+                        : { success: false, error: await res.text() }
+                      if (!res.ok) {
+                        throw new Error(data.error || `Upload failed (${res.status})`)
+                      }
                       if (!data.success) throw new Error(data.error || "Upload failed")
                       const text = data.text || ""
                       setCVText(text)
@@ -791,11 +800,13 @@ export default function EnhanceCVPage() {
                     } catch (err: any) {
                       toast.error(err.message || "Failed to extract text from file")
                     } finally {
+                      setUploadingFile(false)
                       input.value = ''
                     }
                   }}
                   className="block text-sm"
                 />
+                {uploadingFile && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
                 <span className="text-xs text-muted-foreground">PDF/DOCX/TXT</span>
               </div>
               <textarea

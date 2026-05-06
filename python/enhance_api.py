@@ -635,6 +635,39 @@ Transform the CV to be PERFECT for ATS. Output JSON only."""},
 
 enhancer = CVEnhancer()
 
+def _extract_pdf_text(content: bytes) -> tuple[str, str | None]:
+    """
+    Extract text from PDF with graceful fallbacks.
+    Returns (text, error_message).
+    """
+    errors: list[str] = []
+
+    # First attempt: pdfplumber (best layout extraction for many resumes)
+    try:
+        import pdfplumber
+        with pdfplumber.open(io.BytesIO(content)) as pdf:
+            pages = [p.extract_text() or '' for p in pdf.pages]
+            text = "\n".join(pages).strip()
+            if text:
+                return text, None
+            errors.append("pdfplumber extracted empty text")
+    except Exception as e:
+        errors.append(f"pdfplumber: {e}")
+
+    # Fallback: pypdf/PyPDF2-style extraction
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(io.BytesIO(content))
+        pages = [(page.extract_text() or '') for page in reader.pages]
+        text = "\n".join(pages).strip()
+        if text:
+            return text, None
+        errors.append("pypdf extracted empty text")
+    except Exception as e:
+        errors.append(f"pypdf: {e}")
+
+    return "", "; ".join(errors) if errors else "Could not parse PDF"
+
 @app.route('/')
 def root():
     return jsonify({"message": "Enhanced CV API with ATS Optimization running - 90-100% Score Guarantee"})
@@ -649,15 +682,16 @@ def upload():
         content = f.read()
         text = ""
         
-        if filename.endswith('.pdf'):
-            try:
-                import pdfplumber
-                with pdfplumber.open(io.BytesIO(content)) as pdf:
-                    pages = [p.extract_text() or '' for p in pdf.pages]
-                    text = "\n".join(pages)
-                text = re.sub(r'\(cid:\d+\)', '', text)
-            except Exception as e:
-                return jsonify({"success": False, "error": f"PDF parse failed: {e}"}), 500
+        mime = (f.mimetype or "").lower()
+
+        if filename.endswith('.pdf') or mime == 'application/pdf':
+            text, parse_error = _extract_pdf_text(content)
+            if parse_error and not text:
+                return jsonify({
+                    "success": False,
+                    "error": f"PDF parse failed: {parse_error}. If this is a scanned PDF, convert it to searchable PDF or paste text manually."
+                }), 422
+            text = re.sub(r'\(cid:\d+\)', '', text)
         elif filename.endswith('.docx'):
             try:
                 import docx

@@ -1,1 +1,1 @@
-python -m pip install Flask Flask-Cors openai reportlab python-dotenv pdfplumber python-docx
+python -m pip install Flask Flask-Cors openai reportlab python-dotenv pdfplumber pypdf python-docx
