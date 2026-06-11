@@ -994,7 +994,6 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import DashboardNav from "@/components/dashboard-nav"
 import { Button } from "@/components/ui/button"
 import { Download, Sparkles, Save } from "lucide-react"
 
@@ -1191,7 +1190,6 @@ export default function CreateCVPage() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <DashboardNav user={user} />
 
       <header className="border-b border-border bg-card sticky top-0 z-10">
         <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">

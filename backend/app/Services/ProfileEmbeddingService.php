@@ -51,9 +51,9 @@ public function validateProfileCompleteness(User $user): array
     // ❌ REMOVED: Work Experience requirement
 
     return [
-        'valid' => $profileScore >= 60, // Need bio OR skills (50%)
+        'valid' => $profileScore >= 50, // At least professional bio or skills
         'score' => $profileScore,
-        'missing' => $missing
+        'missing' => $missing,
     ];
 }
 
@@ -130,7 +130,7 @@ public function validateProfileCompleteness(User $user): array
      * @param User $user
      * @return bool
      */
-    public function generateEmbedding(User $user): bool
+    public function generateEmbedding(User $user, bool $force = false): bool
     {
         try {
             $profile = $user->profile;
@@ -139,11 +139,12 @@ public function validateProfileCompleteness(User $user): array
                 return false;
             }
 
-            // Validate profile completeness
-            $validation = $this->validateProfileCompleteness($user);
-            if (!$validation['valid']) {
-                Log::warning("User {$user->id} profile incomplete. Score: {$validation['score']}%");
-                return false;
+            if (!$force) {
+                $validation = $this->validateProfileCompleteness($user);
+                if (!$validation['valid']) {
+                    Log::warning("User {$user->id} profile incomplete. Score: {$validation['score']}%");
+                    return false;
+                }
             }
 
             $text = $this->prepareProfileText($user);
@@ -174,16 +175,29 @@ public function validateProfileCompleteness(User $user): array
     }
 
     /**
+     * Refresh embedding for a user by ID (e.g. after skills change).
+     */
+    public function refreshForUserId(int $userId): void
+    {
+        $user = User::with(['profile', 'skills', 'workExperiences', 'education'])->find($userId);
+        if ($user) {
+            $this->updateEmbedding($user);
+        }
+    }
+
+    /**
      * Generate embeddings for all profiles that don't have one
      *
      * @return int Number of profiles processed
      */
-    public function generateAllEmbeddings(): int
+    public function generateAllEmbeddings(bool $force = false): int
     {
         $users = User::with(['profile', 'skills', 'workExperiences', 'education'])
             ->whereHas('profile', function ($query) {
-                $query->whereNull('embedding')
-                    ->orWhere('embedding_generated_at', '<', now()->subDays(30));
+                $query->where(function ($q) {
+                    $q->whereNull('embedding')
+                        ->orWhere('embedding_generated_at', '<', now()->subDays(30));
+                });
             })
             ->get();
 
@@ -191,19 +205,19 @@ public function validateProfileCompleteness(User $user): array
         $skipped = 0;
 
         foreach ($users as $user) {
-            $validation = $this->validateProfileCompleteness($user);
-            
-            if (!$validation['valid']) {
-                $skipped++;
-                Log::info("Skipped user {$user->id}: Profile incomplete (score: {$validation['score']}%)");
-                continue;
+            if (!$force) {
+                $validation = $this->validateProfileCompleteness($user);
+                if (!$validation['valid']) {
+                    $skipped++;
+                    Log::info("Skipped user {$user->id}: Profile incomplete (score: {$validation['score']}%)");
+                    continue;
+                }
             }
 
-            if ($this->generateEmbedding($user)) {
+            if ($this->generateEmbedding($user, $force)) {
                 $count++;
             }
-            
-            // Rate limiting to avoid OpenAI rate limits
+
             sleep(1);
         }
 

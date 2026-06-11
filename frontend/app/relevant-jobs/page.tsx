@@ -502,9 +502,9 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import DashboardNav from "@/components/dashboard-nav";
 import { Button } from "@/components/ui/button";
 import { Loader2, RefreshCw, AlertCircle } from "lucide-react";
+import { API_URL } from "@/lib/api";
 
 interface User {
   id: number;
@@ -526,6 +526,8 @@ interface Job {
   explanation: string;
   description: string;
   requirements: string;
+  matched_skills?: string[];
+  missing_skills?: string[];
 }
 
 interface ProfileStatus {
@@ -535,7 +537,7 @@ interface ProfileStatus {
   needs_update: boolean;
 }
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000/api";
+const API_BASE_URL = API_URL;
 
 export default function RelevantJobsPage() {
   const router = useRouter();
@@ -756,8 +758,6 @@ export default function RelevantJobsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <DashboardNav user={user} />
-
       <main className="max-w-6xl mx-auto px-4 py-12">
         <div className="bg-white rounded-lg shadow-md p-8">
           {/* Header */}
@@ -972,12 +972,29 @@ export default function RelevantJobsPage() {
                       </div>
                     </div>
 
-                    {/* AI Explanation */}
+                    {(job.matched_skills?.length ?? 0) > 0 && (
+                      <div className="flex flex-wrap gap-2 mb-4">
+                        {job.matched_skills!.map((skill) => (
+                          <span
+                            key={skill}
+                            className="text-xs font-medium bg-green-100 text-green-800 px-2 py-1 rounded-full"
+                          >
+                            {skill}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
                       <p className="text-sm font-medium text-blue-900 mb-1">
-                        🤖 Why this is a good match:
+                        Why this is a good match
                       </p>
                       <p className="text-sm text-blue-800">{job.explanation}</p>
+                      {(job.missing_skills?.length ?? 0) > 0 && (
+                        <p className="text-xs text-blue-700/70 mt-2">
+                          Skills to develop: {job.missing_skills!.join(", ")}
+                        </p>
+                      )}
                     </div>
 
                     <p className="text-foreground mb-4 line-clamp-3">

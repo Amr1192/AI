@@ -20,6 +20,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise RuntimeError("Missing OPENAI_API_KEY environment variable. Set OPENAI_API_KEY in your shell or a local .env file.")
 client = OpenAI(api_key=OPENAI_API_KEY)
+CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o-mini")
 
 # ---------------------- CV ANALYZER ---------------------- #
 class CVAnalyzer:
@@ -67,7 +68,7 @@ TEXT:
 
         try:
             doc_response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=CHAT_MODEL,
                 messages=[
                     {"role": "system", "content": "You are a document classifier. Respond with only one word: CV, CERTIFICATE, COVER_LETTER, or OTHER."},
                     {"role": "user", "content": document_type_prompt}
@@ -155,7 +156,7 @@ CV TEXT:
 
         try:
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=CHAT_MODEL,
                 messages=[
                     {"role": "system", "content": "You extract structured data from resumes and score ATS alignment. Output JSON only. Never claim a section is missing if any relevant text appears in the CV."},
                     {"role": "user", "content": prompt}

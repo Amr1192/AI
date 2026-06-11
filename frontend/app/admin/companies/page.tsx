@@ -4,7 +4,17 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useToast } from "@/components/ui/use-toast";
+import { toast } from "sonner";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,7 +25,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import DashboardNav from "@/components/dashboard-nav";
 import { authService } from "@/lib/authService";
 import { motion } from "framer-motion";
 import {
@@ -30,7 +39,6 @@ import {
 } from "lucide-react";
 
 export default function CompaniesPage() {
-  const { toast } = useToast();
   const router = useRouter();
 
   const [user, setUser] = useState<any | null>(null);
@@ -39,6 +47,7 @@ export default function CompaniesPage() {
   const [formType, setFormType] = useState<"add" | "edit">("add");
   const [selectedCompany, setSelectedCompany] = useState<any>(null);
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
 
   const [formData, setFormData] = useState({
     name: "",
@@ -56,11 +65,7 @@ export default function CompaniesPage() {
       const dataArray = Array.isArray(res) ? res : [];
       setCompanies(dataArray.map((c: any) => ({ ...c, _key: c.id })));
     } catch {
-      toast({
-        title: "Error",
-        description: "Failed to load companies",
-        variant: "destructive",
-      });
+      toast.error("Failed to load companies");
     }
   };
 
@@ -150,7 +155,7 @@ export default function CompaniesPage() {
           ...prev,
           { ...newCompany, _key: newCompany.id },
         ]);
-        toast({ title: "Success", description: "Company added successfully" });
+        toast.success("Company added successfully");
       } else {
         const res = await authService.updateCompany(
           selectedCompany.id,
@@ -164,35 +169,26 @@ export default function CompaniesPage() {
               : c
           )
         );
-        toast({
-          title: "Updated",
-          description: "Company updated successfully",
-        });
+        toast.success("Company updated successfully");
       }
 
       setShowForm(false);
     } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error?.message || "Failed saving company",
-        variant: "destructive",
-      });
+      toast.error(error?.message || "Failed saving company");
     }
   };
 
-  const deleteCompany = async (id: number) => {
-    if (!confirm("Are you sure?")) return;
+  const confirmDeleteCompany = async () => {
+    if (!deleteTarget) return;
 
     try {
-      await authService.deleteCompany(id);
-      setCompanies((prev) => prev.filter((c) => c.id !== id));
-      toast({ title: "Deleted", description: "Company deleted" });
+      await authService.deleteCompany(deleteTarget.id);
+      setCompanies((prev) => prev.filter((c) => c.id !== deleteTarget.id));
+      toast.success("Company deleted");
     } catch {
-      toast({
-        title: "Error",
-        description: "Failed deleting company",
-        variant: "destructive",
-      });
+      toast.error("Failed deleting company");
+    } finally {
+      setDeleteTarget(null);
     }
   };
 
@@ -204,8 +200,6 @@ export default function CompaniesPage() {
         <div className="absolute top-40 right-10 w-72 h-72 bg-purple-100 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-[pulse_6s_ease-in-out_infinite_2s]"></div>
         <div className="absolute bottom-20 left-1/3 w-72 h-72 bg-purple-50 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-[pulse_6s_ease-in-out_infinite_4s]"></div>
       </div>
-
-      <DashboardNav user={user} />
 
       <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8 relative z-10">
         {/* Header Section */}
@@ -253,9 +247,9 @@ export default function CompaniesPage() {
               ></div>
 
               {/* Main card */}
-              <Card className="relative bg-[#0f0f2e] border border-slate-900 rounded-3xl shadow-xl hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-2 p-6 text-white">
+              <Card className="relative bg-white/90 backdrop-blur-lg border border-purple-200 rounded-3xl shadow-xl hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-2 p-6">
                 <CardHeader className="p-0 mb-4">
-                  <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-2">
+                  <h2 className="text-2xl font-bold text-slate-800 mb-2 flex items-center gap-2">
                     <span className="bg-gradient-to-br from-purple-400 to-purple-600 w-2 h-2 rounded-full animate-pulse"></span>
                     {c.name}
                   </h2>
@@ -265,22 +259,18 @@ export default function CompaniesPage() {
                 <CardContent className="p-0">
                   {/* Company details */}
                   <div className="space-y-3 mb-6">
-                    <div className="flex items-center gap-3 text-slate-100">
-                      <div className="bg-purple-900/60 p-2 rounded-lg">
-                        <MapPin size={16} className="text-purple-300" />
-                      </div>
-                      <span className="text-sm">{c.location}</span>
+                    <div className="flex items-center gap-3 p-3 bg-purple-50 rounded-xl border border-purple-100">
+                      <MapPin size={18} className="text-purple-600 shrink-0" />
+                      <span className="text-sm font-medium text-slate-800">{c.location}</span>
                     </div>
 
-                    <div className="flex items-center gap-3 text-slate-100">
-                      <div className="bg-purple-900/60 p-2 rounded-lg">
-                        <Globe size={16} className="text-purple-200" />
-                      </div>
-                      <span className="text-sm break-all">{c.website}</span>
+                    <div className="flex items-center gap-3 p-3 bg-purple-50 rounded-xl border border-purple-100">
+                      <Globe size={18} className="text-purple-600 shrink-0" />
+                      <span className="text-sm font-medium text-slate-800 break-all">{c.website}</span>
                     </div>
 
                     {c.description && (
-                      <p className="text-slate-100 text-sm mt-3 p-3 bg-slate-900/70 rounded-xl border border-slate-700">
+                      <p className="text-slate-600 text-sm mt-3 p-3 bg-slate-50 rounded-xl border border-purple-100">
                         {c.description}
                       </p>
                     )}
@@ -300,7 +290,7 @@ export default function CompaniesPage() {
                     <Button
                       size="sm"
                       variant="destructive"
-                      onClick={() => deleteCompany(c.id)}
+                      onClick={() => setDeleteTarget({ id: c.id, name: c.name })}
                       className="flex-1 bg-red-600 text-white px-6 py-3 rounded-xl font-semibold 
 hover:bg-red-700 transition-all duration-300 shadow-lg hover:shadow-xl"
                     >
@@ -392,7 +382,7 @@ hover:bg-red-700 transition-all duration-300 shadow-lg hover:shadow-xl"
               onChange={(e) =>
                 setFormData({ ...formData, logo: e.target.files?.[0] || null })
               }
-              className="w-full bg-purple-50 border-2 border-purple-200 text-slate-800 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-gradient-to-br file:from-purple-400 file:to-purple-600 file:text-white file:cursor-pointer hover:file:opacity-80 px-4 py-3 rounded-xl transition-all"
+              className="h-auto min-h-12 w-full bg-purple-50 border-2 border-purple-200 text-slate-800 px-4 py-2 rounded-xl transition-all file:mr-4 file:h-auto file:cursor-pointer file:rounded-lg file:border-0 file:bg-gradient-to-br file:from-purple-400 file:to-purple-600 file:px-4 file:py-2.5 file:text-sm file:font-medium file:text-white hover:file:opacity-90"
             />
 
             <div className="flex gap-4 pt-4">
@@ -416,6 +406,32 @@ hover:bg-red-700 transition-all duration-300 shadow-lg hover:shadow-xl"         
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
+        <AlertDialogContent className="bg-white border border-purple-100 rounded-3xl shadow-2xl sm:max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-xl font-bold text-slate-800">
+              Delete company?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-600">
+              {deleteTarget
+                ? `Are you sure you want to delete "${deleteTarget.name}"? This action cannot be undone.`
+                : "Are you sure you want to delete this company?"}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-2">
+            <AlertDialogCancel className="border-purple-200 text-slate-700 hover:bg-purple-50 rounded-xl">
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmDeleteCompany}
+              className="bg-red-600 hover:bg-red-700 text-white rounded-xl border-0"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

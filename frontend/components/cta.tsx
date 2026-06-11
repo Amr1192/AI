@@ -1,19 +1,48 @@
-import { Button } from "@/components/ui/button"
-import Link from "next/link"
+"use client";
+
+import { useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import Link from "next/link";
+import { getStoredUser } from "@/lib/api";
 
 export default function CTA() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setIsLoggedIn(!!getStoredUser());
+    sync();
+    window.addEventListener("storage", sync);
+    window.addEventListener("userLogin", sync);
+    window.addEventListener("userLogout", sync);
+    return () => {
+      window.removeEventListener("storage", sync);
+      window.removeEventListener("userLogin", sync);
+      window.removeEventListener("userLogout", sync);
+    };
+  }, []);
+
   return (
-    <section id="contact" className="bg-[#1a1a3e] text-white py-16 md:py-24">
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-        <h2 className="text-3xl md:text-4xl font-bold mb-6">Ready to Transform Your Career Path?</h2>
-        <p className="text-gray-300 text-lg mb-8 max-w-2xl mx-auto">
-          Join thousands of job seekers who have successfully landed their dream jobs with CV Master AI. Start your
-          journey today!
+    <section id="contact" className="bg-primary py-16 text-primary-foreground md:py-24">
+      <div className="mx-auto max-w-4xl px-4 text-center sm:px-6 lg:px-8">
+        <h2 className="mb-6 text-3xl font-bold md:text-4xl">Ready to Transform Your Career Path?</h2>
+        <p className="mx-auto mb-8 max-w-2xl text-lg text-primary-foreground/80">
+          Join thousands of job seekers who have successfully landed their dream jobs with CV Master AI.
+          Start your journey today!
         </p>
-        <Link href="/register">
-          <Button className="bg-purple-500 hover:bg-purple-600 text-white px-8 py-6 text-lg">Get Started Free</Button>
-        </Link>
+        {!isLoggedIn ? (
+          <Link href="/login?mode=signup">
+            <Button size="lg" className="bg-accent px-8 py-6 text-lg text-accent-foreground hover:bg-accent/90">
+              Get Started Free
+            </Button>
+          </Link>
+        ) : (
+          <Link href="/create-cv">
+            <Button size="lg" variant="secondary" className="px-8 py-6 text-lg">
+              Build Your CV
+            </Button>
+          </Link>
+        )}
       </div>
     </section>
-  )
+  );
 }

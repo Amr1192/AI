@@ -1,137 +1,231 @@
-"use client"
+"use client";
 
-import { useEffect, useState } from "react"
-import { Menu, User, LogOut } from "lucide-react"
-import { Button } from "@/components/ui/button"
-// import { ThemeToggle } from "@/components/theme-toggle"
-import Link from "next/link"
+import { useEffect, useState } from "react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import {
+  Menu,
+  User,
+  LogOut,
+  FileText,
+  Sparkles,
+  Mic,
+  Briefcase,
+  BarChart3,
+  LayoutDashboard,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/components/ui/sheet";
+import { cn } from "@/lib/utils";
+import { getStoredUser } from "@/lib/api";
 
-interface User {
-  id: string
-  name: string
-  email: string
-  createdAt: string
+interface UserData {
+  id: string | number;
+  name: string;
+  email: string;
+  role?: string;
 }
 
+const productLinks = [
+  { href: "/create-cv", label: "Create CV", icon: FileText },
+  { href: "/enhance-cv", label: "Enhance CV", icon: Sparkles },
+  { href: "/interview-setup", label: "Interviews", icon: Mic },
+  { href: "/job-search", label: "Job Search", icon: Briefcase },
+  { href: "/cv-analysis-pro", label: "CV Analysis", icon: BarChart3 },
+];
+
+const marketingLinks = [
+  { href: "#features", label: "Features" },
+  { href: "#pricing", label: "Pricing" },
+  { href: "#about", label: "About" },
+  { href: "#contact", label: "Contact" },
+];
+
 export default function Header() {
-  const [isLoggedIn, setIsLoggedIn] = useState(false)
-  const [user, setUser] = useState<User | null>(null)
+  const pathname = usePathname();
+  const [user, setUser] = useState<UserData | null>(null);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
-    const checkUser = () => {
-      const userData = localStorage.getItem("cvmaster_user")
-      if (userData) {
-        setUser(JSON.parse(userData))
-        setIsLoggedIn(true)
-      } else {
-        setUser(null)
-        setIsLoggedIn(false)
-      }
-    }
-
-    // Check on mount
-    checkUser()
-
-    // Listen for storage changes (when user logs in/out from another tab)
-    window.addEventListener('storage', checkUser)
-
-    // Listen for custom login event
-    window.addEventListener('userLogin', checkUser)
-    window.addEventListener('userLogout', checkUser)
-
+    const sync = () => setUser(getStoredUser<UserData>());
+    sync();
+    window.addEventListener("storage", sync);
+    window.addEventListener("userLogin", sync);
+    window.addEventListener("userLogout", sync);
     return () => {
-      window.removeEventListener('storage', checkUser)
-      window.removeEventListener('userLogin', checkUser)
-      window.removeEventListener('userLogout', checkUser)
-    }
-  }, [])
+      window.removeEventListener("storage", sync);
+      window.removeEventListener("userLogin", sync);
+      window.removeEventListener("userLogout", sync);
+    };
+  }, []);
 
   const handleLogout = () => {
-    localStorage.removeItem("cvmaster_user")
-    setIsLoggedIn(false)
-    setUser(null)
-    // Dispatch custom event to notify other components
-    window.dispatchEvent(new CustomEvent('userLogout'))
-    window.location.href = "/"
-  }
+    localStorage.removeItem("cvmaster_user");
+    localStorage.removeItem("cvmaster_token");
+    window.dispatchEvent(new CustomEvent("userLogout"));
+    window.location.href = "/";
+  };
+
+  const isLoggedIn = !!user;
+  const isAdmin = user?.role && user.role !== "user";
+
+  const NavLink = ({
+    href,
+    label,
+    icon: Icon,
+  }: {
+    href: string;
+    label: string;
+    icon?: React.ComponentType<{ className?: string }>;
+  }) => {
+    const active = pathname === href || pathname.startsWith(href + "/");
+    return (
+      <Link
+        href={href}
+        onClick={() => setMobileOpen(false)}
+        className={cn(
+          "flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+          active
+            ? "bg-primary/10 text-primary"
+            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+        )}
+      >
+        {Icon && <Icon className="h-4 w-4" />}
+        {label}
+      </Link>
+    );
+  };
+
   return (
-    <header className="bg-background dark:bg-background border-b border-border sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center font-bold text-primary-foreground">
+    <header className="sticky top-0 z-50 border-b border-border/60 bg-background/80 backdrop-blur-lg supports-[backdrop-filter]:bg-background/70">
+      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3 sm:px-6 lg:px-8">
+        <Link href="/" className="flex items-center gap-2.5 shrink-0">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-primary to-accent text-sm font-bold text-primary-foreground shadow-sm">
             CV
           </div>
-          <span className="font-bold text-lg text-foreground">CV Master AI</span>
-        </div>
+          <span className="hidden font-bold text-foreground sm:inline">CV Master AI</span>
+        </Link>
 
-        <nav className="hidden md:flex items-center gap-8">
+        <nav className="hidden items-center gap-1 lg:flex">
           {isLoggedIn ? (
             <>
-              <Link href="/create-cv" className="text-foreground hover:text-primary transition">
-                Create CV
-              </Link>
-              <Link href="/enhance-cv" className="text-foreground hover:text-primary transition">
-                Enhance CV
-              </Link>
-              <Link href="/interview-setup" className="text-foreground hover:text-primary transition">
-                Interviews
-              </Link>
-              <Link href="/job-search" className="text-foreground hover:text-primary transition">
-                Job Search
-              </Link>
-              <Link href="/cv-analysis-pro" className="text-foreground hover:text-primary transition">
-                CV Analysis
-              </Link>
+              {isAdmin && (
+                <NavLink href="/dashboard" label="Dashboard" icon={LayoutDashboard} />
+              )}
+              {productLinks.map((l) => (
+                <NavLink key={l.href} {...l} />
+              ))}
             </>
           ) : (
-            <>
-              <a href="#features" className="text-foreground hover:text-primary transition">
-                Features
+            marketingLinks.map((l) => (
+              <a
+                key={l.href}
+                href={l.href}
+                className="rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground transition hover:bg-muted hover:text-foreground"
+              >
+                {l.label}
               </a>
-              <a href="#pricing" className="text-foreground hover:text-primary transition">
-                Pricing
-              </a>
-              <a href="#about" className="text-foreground hover:text-primary transition">
-                About
-              </a>
-              <a href="#contact" className="text-foreground hover:text-primary transition">
-                Contact
-              </a>
-            </>
+            ))
           )}
         </nav>
 
-        <div className="flex items-center gap-4">
-          {/* <ThemeToggle />/ */}
+        <div className="flex items-center gap-2">
           {isLoggedIn ? (
             <>
-              <Link href="/profile">
-                <Button variant="outline" className="hidden sm:inline-flex bg-transparent">
-                  <User className="w-4 h-4 mr-2" />
-                  {user?.name || "Profile"}
+              <Link href="/profile" className="hidden sm:block">
+                <Button variant="ghost" size="sm" className="gap-2">
+                  <User className="h-4 w-4" />
+                  <span className="max-w-[120px] truncate">{user?.name}</span>
                 </Button>
               </Link>
-              <Button 
-                variant="outline" 
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={handleLogout}
-                className="bg-transparent hover:bg-red-50 hover:text-red-600"
+                className="hidden sm:inline-flex gap-2"
               >
-                <LogOut className="w-4 h-4 mr-2" />
+                <LogOut className="h-4 w-4" />
                 Logout
               </Button>
             </>
           ) : (
-            <>
-              <Link href="/login">
-                <Button variant="outline" className="hidden sm:inline-flex bg-transparent">
-                  Sign In
-                </Button>
-              </Link>
-            </>
+            <Link href="/login" className="hidden sm:block">
+              <Button size="sm">Sign In</Button>
+            </Link>
           )}
-          <Menu className="md:hidden w-6 h-6 text-foreground" />
+
+          <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+            <SheetTrigger asChild>
+              <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Open menu">
+                <Menu className="h-5 w-5" />
+              </Button>
+            </SheetTrigger>
+            <SheetContent side="right" className="w-[min(100vw-2rem,320px)]">
+              <SheetHeader>
+                <SheetTitle>Menu</SheetTitle>
+              </SheetHeader>
+              <div className="mt-6 flex flex-col gap-1">
+                {isLoggedIn ? (
+                  <>
+                    <Link
+                      href="/profile"
+                      onClick={() => setMobileOpen(false)}
+                      className="mb-3 flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm"
+                    >
+                      <User className="h-4 w-4" />
+                      {user?.name}
+                    </Link>
+                    {isAdmin && (
+                      <NavLink href="/dashboard" label="Dashboard" icon={LayoutDashboard} />
+                    )}
+                    {productLinks.map((l) => (
+                      <NavLink key={l.href} {...l} />
+                    ))}
+                    <Button
+                      variant="outline"
+                      className="mt-4 gap-2"
+                      onClick={() => {
+                        setMobileOpen(false);
+                        handleLogout();
+                      }}
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Logout
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    {marketingLinks.map((l) => (
+                      <a
+                        key={l.href}
+                        href={l.href}
+                        onClick={() => setMobileOpen(false)}
+                        className="rounded-lg px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted"
+                      >
+                        {l.label}
+                      </a>
+                    ))}
+                    <Link href="/login" onClick={() => setMobileOpen(false)} className="mt-4">
+                      <Button className="w-full">Sign In</Button>
+                    </Link>
+                    <Link href="/register" onClick={() => setMobileOpen(false)}>
+                      <Button variant="outline" className="mt-2 w-full">
+                        Create Account
+                      </Button>
+                    </Link>
+                  </>
+                )}
+              </div>
+            </SheetContent>
+          </Sheet>
         </div>
       </div>
     </header>
-  )
+  );
 }

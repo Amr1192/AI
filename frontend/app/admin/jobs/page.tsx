@@ -6,7 +6,6 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/ui/use-toast";
-import DashboardNav from "@/components/dashboard-nav";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -480,8 +479,6 @@ export default function JobSearchPage() {
         <div className="absolute bottom-20 left-1/3 w-72 h-72 bg-purple-50 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-[pulse_6s_ease-in-out_infinite_4s]"></div>
       </div>
 
-      <DashboardNav user={user!} />
-
       <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8 relative z-10">
         {/* Header Section */}
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-12 gap-6">
@@ -524,27 +521,27 @@ export default function JobSearchPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="relative">
               <Search
-                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400"
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
                 size={20}
               />
               <Input
                 placeholder="Search title or company..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 bg-purple-50 border-2 border-purple-200 text-slate-800 placeholder-slate-500 px-4 py-3 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
+                className="h-12 bg-purple-50 border-2 border-purple-200 text-slate-800 placeholder-slate-500 pl-10 pr-4 py-3 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
               />
             </div>
 
             <div className="relative">
               <MapPin
-                className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400"
+                className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400"
                 size={20}
               />
               <Input
                 placeholder="Filter by location..."
                 value={locationFilter}
                 onChange={(e) => setLocationFilter(e.target.value)}
-                className="pl-10 bg-purple-50 border-2 border-purple-200 text-slate-800 placeholder-slate-500 px-4 py-3 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
+                className="h-12 bg-purple-50 border-2 border-purple-200 text-slate-800 placeholder-slate-500 pl-10 pr-4 py-3 rounded-xl focus:ring-2 focus:ring-purple-500 focus:border-purple-500 transition-all"
               />
             </div>
           </div>

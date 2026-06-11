@@ -22,9 +22,8 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Loader2, Sparkles, AlertCircle, Plus } from "lucide-react";
-import Header from "@/components/header";
 import axios from "axios";
-import toast from "react-hot-toast";
+import { toast } from "sonner";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 
@@ -177,31 +176,40 @@ export default function InterviewSetupPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
+    <div className="min-h-screen bg-white relative overflow-hidden">
+      <div className="absolute inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-20 left-10 w-72 h-72 bg-purple-200 rounded-full mix-blend-multiply filter blur-3xl opacity-40 animate-[pulse_6s_ease-in-out_infinite]" />
+        <div className="absolute top-40 right-10 w-72 h-72 bg-purple-100 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-[pulse_6s_ease-in-out_infinite_2s]" />
+        <div className="absolute bottom-20 left-1/3 w-72 h-72 bg-purple-50 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-[pulse_6s_ease-in-out_infinite_4s]" />
+      </div>
 
-      <div className="max-w-4xl mx-auto p-8">
+      <div className="max-w-4xl mx-auto p-8 relative z-10">
         <div className="mb-8">
-          <h2 className="text-3xl font-bold mb-2">Start Your AI Interview</h2>
-          <p className="text-muted-foreground">
+          <h2 className="text-3xl font-bold mb-2 text-slate-800">Start Your AI Interview</h2>
+          <p className="text-slate-600">
             Select your skills and let AI generate the interview dynamically.
           </p>
         </div>
 
         {/* Error Display */}
         {error && (
-          <Card className="mb-6 p-4 bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800">
-            <p className="text-red-600 dark:text-red-400 text-sm">{error}</p>
+          <Card className="mb-6 p-4 bg-red-50 border-red-200">
+            <p className="text-red-600 text-sm">{error}</p>
           </Card>
         )}
 
         {/* Skills List */}
-        <Card className="p-6 mb-6">
+        <Card className="p-6 mb-6 bg-white/90 backdrop-blur-lg border border-purple-200 rounded-3xl shadow-xl">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xl font-semibold">Your Skills</h3>
+            <h3 className="text-xl font-semibold text-slate-800">Your Skills</h3>
 
             <div className="flex gap-2">
-              <Button onClick={loadSkills} disabled={loadingSkills} variant="outline">
+              <Button
+                onClick={loadSkills}
+                disabled={loadingSkills}
+                variant="outline"
+                className="border-purple-200 text-slate-700 hover:bg-purple-50"
+              >
                 {loadingSkills ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading...
@@ -211,7 +219,11 @@ export default function InterviewSetupPage() {
                 )}
               </Button>
 
-              <Button onClick={() => setShowQuickAddModal(true)} variant="outline">
+              <Button
+                onClick={() => setShowQuickAddModal(true)}
+                variant="outline"
+                className="border-purple-200 text-slate-700 hover:bg-purple-50"
+              >
                 <Plus className="mr-2 h-4 w-4" /> Quick Add
               </Button>
             </div>
@@ -222,17 +234,20 @@ export default function InterviewSetupPage() {
               {skills.map(skill => (
                 <div
                   key={skill.id}
-                  className="flex items-center gap-3 p-3 rounded-lg border border-border hover:bg-muted/50 transition"
+                  className="flex items-start gap-4 p-4 rounded-xl border-2 border-purple-100 bg-purple-50/50 hover:bg-purple-50 transition"
                 >
-                  <Checkbox
-                    id={`skill-${skill.id}`}
-                    checked={selectedSkills.includes(skill.id)}
-                    onCheckedChange={() => toggleSkill(skill.id)}
-                  />
+                  <div className="pt-0.5 shrink-0">
+                    <Checkbox
+                      id={`skill-${skill.id}`}
+                      checked={selectedSkills.includes(skill.id)}
+                      onCheckedChange={() => toggleSkill(skill.id)}
+                      className="size-5 border-purple-300 data-[state=checked]:bg-purple-600 data-[state=checked]:border-purple-600"
+                    />
+                  </div>
 
-                  <Label htmlFor={`skill-${skill.id}`} className="flex-1 cursor-pointer">
-                    <p className="font-medium">{skill.title}</p>
-                    <p className="text-sm text-muted-foreground">
+                  <Label htmlFor={`skill-${skill.id}`} className="flex-1 cursor-pointer min-w-0">
+                    <p className="font-medium text-slate-800">{skill.title}</p>
+                    <p className="text-sm text-slate-500">
                       {skill.proficiency_level} • {skill.years_of_experience} years
                     </p>
                   </Label>
@@ -240,12 +255,12 @@ export default function InterviewSetupPage() {
               ))}
             </div>
           ) : (
-            <div className="text-center py-8 text-muted-foreground">
+            <div className="text-center py-8 text-slate-500">
               <AlertCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p>No skills found</p>
               <Button
                 onClick={() => setShowNoSkillsModal(true)}
-                className="mt-4"
+                className="mt-4 border-purple-200 text-slate-700 hover:bg-purple-50"
                 variant="outline"
               >
                 Add Skills Now
@@ -256,13 +271,13 @@ export default function InterviewSetupPage() {
 
         {/* Dynamic Interview Summary */}
         {selectedSkills.length > 0 && (
-          <Card className="p-6 mb-6 bg-accent/5 border-accent/20">
+          <Card className="p-6 mb-6 bg-purple-50 border-2 border-purple-200 rounded-3xl shadow-lg">
             <div className="flex items-center gap-2 mb-2">
-              <Sparkles className="h-5 w-5 text-accent" />
-              <h3 className="font-semibold">Ready to Start</h3>
+              <Sparkles className="h-5 w-5 text-purple-600" />
+              <h3 className="font-semibold text-slate-800">Ready to Start</h3>
             </div>
 
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-slate-600">
               AI will generate adaptive, skill-based interview questions for:{" "}
               {skills
                 .filter(s => selectedSkills.includes(s.id))
@@ -277,7 +292,7 @@ export default function InterviewSetupPage() {
           onClick={startInterview}
           disabled={loading || selectedSkills.length === 0}
           size="lg"
-          className="w-full"
+          className="w-full bg-gradient-to-br from-purple-400 to-purple-600 hover:from-purple-500 hover:to-purple-700 text-white rounded-2xl py-6 text-lg font-semibold shadow-lg hover:shadow-xl border-0"
         >
           {loading ? (
             <>
@@ -295,7 +310,7 @@ export default function InterviewSetupPage() {
 
       {/* No Skills Modal */}
       <Dialog open={showNoSkillsModal} onOpenChange={setShowNoSkillsModal}>
-        <DialogContent>
+        <DialogContent className="bg-white border border-purple-100 rounded-3xl shadow-2xl">
           <DialogHeader>
             <DialogTitle>No Skills Found</DialogTitle>
             <DialogDescription>
@@ -325,7 +340,7 @@ export default function InterviewSetupPage() {
 
       {/* Quick Add Modal */}
       <Dialog open={showQuickAddModal} onOpenChange={setShowQuickAddModal}>
-        <DialogContent>
+        <DialogContent className="bg-white border border-purple-100 rounded-3xl shadow-2xl">
           <DialogHeader>
             <DialogTitle>Add Skill</DialogTitle>
             <DialogDescription>

@@ -14,10 +14,7 @@ import {
 } from "@/components/ui/select";
 import { Trash2, Plus, Save, Pencil, X } from "lucide-react";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
-
-// Mock user ID - replace with actual auth
-const MOCK_USER_ID = 1;
+import { API_BASE, getStoredUser } from "@/lib/api";
 
 interface Skill {
   id?: number;
@@ -43,11 +40,21 @@ export default function ManageSkillsPage() {
     loadSkills();
   }, []);
 
+  const getUserId = () => {
+    const user = getStoredUser<{ id?: number }>();
+    return user?.id ?? null;
+  };
+
   const loadSkills = async () => {
+    const userId = getUserId();
+    if (!userId) {
+      setError("Please log in to manage your skills");
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/users/${MOCK_USER_ID}/skills`);
+      const res = await fetch(`${API_BASE}/api/users/${userId}/skills`);
       if (!res.ok) throw new Error("Failed to load skills");
       const data = await res.json();
       setSkills(data.skills || []);
@@ -67,12 +74,18 @@ export default function ManageSkillsPage() {
     setLoading(true);
     setError(null);
 
+    const userId = getUserId();
+    if (!userId) {
+      setError("Please log in to manage your skills");
+      return;
+    }
+
     try {
       const res = await fetch(`${API_BASE}/api/profile/skills`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          user_id: MOCK_USER_ID,
+          user_id: userId,
           title: newSkill.title,
           years_of_experience: newSkill.years_of_experience,
           proficiency_level: newSkill.proficiency_level,
@@ -141,35 +154,13 @@ export default function ManageSkillsPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b border-border bg-card px-6 py-4">
-        <div className="flex items-center justify-between max-w-6xl mx-auto">
-          <div className="flex items-center gap-3">
-            <div className="text-primary size-7">
-              <svg fill="none" viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
-                <g clipPath="url(#clip0_6_319)">
-                  <path
-                    d="M8.57829 8.57829C5.52816 11.6284 3.451 15.5145 2.60947 19.7452C1.76794 23.9758 2.19984 28.361 3.85056 32.3462C5.50128 36.3314 8.29667 39.7376 11.8832 42.134C15.4698 44.5305 19.6865 45.8096 24 45.8096C28.3135 45.8096 32.5302 44.5305 36.1168 42.134C39.7033 39.7375 42.4987 36.3314 44.1494 32.3462C45.8002 28.361 46.2321 23.9758 45.3905 19.7452C44.549 15.5145 42.4718 11.6284 39.4217 8.57829L24 24L8.57829 8.57829Z"
-                    fill="currentColor"
-                  />
-                </g>
-                <defs>
-                  <clipPath id="clip0_6_319">
-                    <rect fill="white" height="48" width="48" />
-                  </clipPath>
-                </defs>
-              </svg>
-            </div>
-            <h1 className="text-lg font-bold tracking-tight">Manage Your Skills</h1>
-          </div>
-          <Button variant="outline" onClick={() => window.location.href = "/interview-setup"}>
+      <div className="max-w-4xl mx-auto p-8">
+        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <h1 className="text-2xl font-bold tracking-tight">Manage Your Skills</h1>
+          <Button variant="outline" onClick={() => (window.location.href = "/interview-setup")}>
             Start Interview
           </Button>
         </div>
-      </header>
-
-      {/* Main Content */}
-      <div className="max-w-4xl mx-auto p-8">
         {/* Error Display */}
         {error && (
           <Card className="mb-6 p-4 bg-red-50 dark:bg-red-900/10 border-red-200 dark:border-red-800">

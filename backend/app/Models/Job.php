@@ -20,6 +20,9 @@ class Job extends Model
         'salary_to',
         'deadline',
         'is_active',
+        'embedding',
+        'embedding_text',
+        'embedding_generated_at',
     ];
 
     protected $casts = [

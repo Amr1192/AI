@@ -1,97 +1,113 @@
 /**
  * AgenticInterviewer.js
- * 
+ *
  * Autonomous AI interviewer that:
  * - Asks questions naturally
  * - Probes deeper based on answers
  * - Responds to user questions
  * - Decides when to change topics
- * - Concludes interview when appropriate
+ * - Concludes only when the candidate wants to stop
  */
 
 export class AgenticInterviewer {
-  constructor(userSkills, interviewId) {
+  constructor(userSkills, interviewId, constraints = {}) {
     this.userSkills = userSkills;
     this.interviewId = interviewId;
+    this.allowedSkills = constraints.allowedSkills?.length
+      ? constraints.allowedSkills
+      : userSkills.map((s) => s.title);
+    this.strictMode = constraints.strictMode ?? true;
     this.conversationHistory = [];
     this.currentTopic = null;
     this.questionsAsked = 0;
-    this.maxQuestions = 8;
+    this.questionsAnswered = 0;
     this.topicsCovered = new Set();
+    this.selectedSkill = this.allowedSkills.length === 1 ? this.allowedSkills[0] : null;
+
+    if (this.selectedSkill) {
+      this.topicsCovered.add(this.selectedSkill);
+    }
   }
 
-  /**
-   * Generate the system instructions for the agentic interviewer
-   */
   getSystemInstructions() {
     const skillList = this.userSkills
-      .map(s => `${s.title} (${s.proficiency_level}, ${s.years_of_experience} yrs)`)
+      .map((s) => `${s.title} (${s.proficiency_level}, ${s.years_of_experience} yrs)`)
       .join('\n');
 
-    // ✅ Add randomization to ensure different questions each time
     const sessionSeed = Date.now();
     const randomTopics = this.getRandomTopics();
+    const allowedList = this.allowedSkills.join(', ');
+
+    const skillSelectionPhase =
+      this.allowedSkills.length === 1
+        ? `Phase 1 - Single Skill Selected:
+1. Greet the candidate warmly
+2. The candidate already chose to practice ONLY: ${this.allowedSkills[0]}
+3. Do NOT ask which skill to practice
+4. Call select_skill with "${this.allowedSkills[0]}" immediately
+5. Then call ask_question once for that skill`
+        : `Phase 1 - Greeting & Skill Selection:
+1. Greet the candidate warmly
+2. Ask which skill they want to practice from ONLY this list: ${allowedList}
+3. WAIT for their response
+4. When they choose, call select_skill once
+5. Then call ask_question once for that skill`;
+
+    const strictRule = this.strictMode
+      ? `⚠️ STRICT SKILL RULE: You may ONLY discuss these skills: ${allowedList}. Never ask about anything outside this list.`
+      : '';
 
     return `You are a friendly, conversational technical interviewer. Session: ${sessionSeed}
 
-AVAILABLE SKILLS TO PRACTICE:
+SELECTED SKILLS FOR THIS SESSION:
 ${skillList}
 
-⚠️ CRITICAL - QUESTION VARIETY REQUIREMENT:
-Every interview must have COMPLETELY DIFFERENT questions. Use these focus areas: ${randomTopics.join(', ')}
+${strictRule}
 
-Question variety strategies:
-- Ask about different aspects: theory, practice, debugging, optimization, trade-offs
-- Vary depths: basic concepts → applied scenarios → complex problems
-- Change perspectives: "what", "why", "how", "when", "compare", "debug"
-- NEVER ask the same question type twice
+⚠️ QUESTION VARIETY:
+Every interview must have DIFFERENT questions. Focus areas for this session: ${randomTopics.join(', ')}
 
 CONVERSATION FLOW:
 
-Phase 1 - Greeting & Skill Selection:
-1. Greet the candidate warmly
-2. Ask: "Which skill would you like to practice today?"
-3. WAIT for their response
-4. When they choose a skill (e.g., "SQL", "Python"), acknowledge it
-5. Then call the ask_question function ONCE for that skill
+${skillSelectionPhase}
 
-Phase 2 - Interview (${this.maxQuestions} questions total):
-6. Ask ONE unique question about the chosen skill
-7. WAIT for their complete answer
-8. Either probe deeper OR ask a DIFFERENT question
-9. Continue until ${this.maxQuestions} questions asked
+Phase 2 - Open Practice (no question limit):
+6. Ask ONE question at a time, then WAIT for the full answer
+7. After each answer, either probe deeper OR ask a different question about the same skill
+8. Continue as long as the candidate wants to keep practicing
+9. There is NO maximum number of questions
+10. Only call conclude_interview when the candidate explicitly says they want to stop or end the interview
 
 CRITICAL RULES:
-- NEVER repeat questions or ask similar ones
-- Vary question formats constantly
-- In Phase 1, do NOT call functions until they choose a skill
-- After they choose, call ask_question ONCE
+- NEVER repeat the same question
 - Ask ONE question at a time, then STOP and WAIT
+- Call ask_question each time you ask a new interview question
+- Do NOT auto-end the interview after a fixed number of questions
 
-Start by greeting them and asking which skill to practice.`;
+Start by greeting the candidate.`;
   }
 
-  /**
-   * ✅ NEW: Generate random topic focus areas for variety
-   */
   getRandomTopics() {
     const allTopics = [
-      'fundamentals', 'practical scenarios', 'performance optimization',
-      'debugging', 'best practices', 'trade-offs', 'real-world problems',
-      'advanced concepts', 'common pitfalls', 'modern techniques'
+      'fundamentals',
+      'practical scenarios',
+      'performance optimization',
+      'debugging',
+      'best practices',
+      'trade-offs',
+      'real-world problems',
+      'advanced concepts',
+      'common pitfalls',
+      'modern techniques',
     ];
-    
-    // Shuffle and return 3 random topics
+
     return allTopics.sort(() => Math.random() - 0.5).slice(0, 3);
   }
 
-  /**
-   * ✅ FIXED: Define the functions with proper 'type' field for OpenAI Realtime API
-   */
   getFunctionDefinitions() {
     return [
       {
-        type: 'function', // ✅ ADDED: Required by OpenAI Realtime API
+        type: 'function',
         name: 'select_skill',
         description: 'Record which skill the candidate chose to practice from their available skills',
         parameters: {
@@ -99,18 +115,18 @@ Start by greeting them and asking which skill to practice.`;
           properties: {
             skill_name: {
               type: 'string',
-              description: 'The exact skill name the candidate wants to practice (must be from their available skills)'
+              description: 'The exact skill name the candidate wants to practice (must be from their available skills)',
             },
             confirmation: {
               type: 'string',
-              description: 'A brief, friendly confirmation message (e.g., "Great! Let\'s focus on React" or "Perfect choice! SQL it is")'
-            }
+              description: 'A brief, friendly confirmation message',
+            },
           },
-          required: ['skill_name', 'confirmation']
-        }
+          required: ['skill_name', 'confirmation'],
+        },
       },
       {
-        type: 'function', // ✅ ADDED
+        type: 'function',
         name: 'ask_question',
         description: 'Ask the candidate a technical question about the skill they selected',
         parameters: {
@@ -118,42 +134,42 @@ Start by greeting them and asking which skill to practice.`;
           properties: {
             skill: {
               type: 'string',
-              description: 'The skill this question is about (must match the skill they selected)'
+              description: 'The skill this question is about',
             },
             question: {
               type: 'string',
-              description: 'The actual technical question to ask them'
+              description: 'The interview question to ask',
             },
             difficulty: {
               type: 'string',
               enum: ['easy', 'medium', 'hard'],
-              description: 'Question difficulty level based on their proficiency'
-            }
+              description: 'Difficulty level of the question',
+            },
           },
-          required: ['skill', 'question', 'difficulty']
-        }
+          required: ['skill', 'question', 'difficulty'],
+        },
       },
       {
-        type: 'function', // ✅ ADDED
+        type: 'function',
         name: 'probe_deeper',
-        description: 'Ask a follow-up question to dig deeper into their last answer',
+        description: 'Ask a follow-up question to dig deeper into their previous answer',
         parameters: {
           type: 'object',
           properties: {
-            follow_up_question: {
-              type: 'string',
-              description: 'A deeper, more specific follow-up question based on what they just said'
-            },
             reason: {
               type: 'string',
-              description: 'Why you want to probe deeper (e.g., "answer was vague", "interesting point to explore", "need more technical detail")'
-            }
+              description: 'Why you are probing deeper',
+            },
+            follow_up: {
+              type: 'string',
+              description: 'The follow-up question',
+            },
           },
-          required: ['follow_up_question', 'reason']
-        }
+          required: ['reason', 'follow_up'],
+        },
       },
       {
-        type: 'function', // ✅ ADDED
+        type: 'function',
         name: 'respond_to_question',
         description: 'Answer a question the candidate asked you, then continue the interview',
         parameters: {
@@ -161,88 +177,103 @@ Start by greeting them and asking which skill to practice.`;
           properties: {
             answer: {
               type: 'string',
-              description: 'Your clear, helpful answer to their question'
+              description: 'Your answer to their question',
             },
-            next_question: {
-              type: 'string',
-              description: 'The next question you want to ask them after answering'
-            }
           },
-          required: ['answer', 'next_question']
-        }
+          required: ['answer'],
+        },
       },
       {
-        type: 'function', // ✅ ADDED
+        type: 'function',
         name: 'conclude_interview',
-        description: 'End the interview politely after sufficient questions have been asked',
+        description: 'End the interview when the candidate wants to stop',
         parameters: {
           type: 'object',
           properties: {
             closing_message: {
               type: 'string',
-              description: 'A warm, professional closing message thanking them for their time'
+              description: 'A warm, professional closing message thanking them for their time',
             },
             reason: {
               type: 'string',
-              description: 'Why you are concluding (e.g., "reached question limit", "covered all key topics", "comprehensive assessment complete")'
-            }
+              description: 'Why you are concluding',
+            },
           },
-          required: ['closing_message', 'reason']
-        }
-      }
+          required: ['closing_message', 'reason'],
+        },
+      },
     ];
   }
 
-  /**
-   * Handle function calls from the AI
-   */
+  isAllowedSkill(skillName) {
+    if (!skillName) return false;
+    const normalized = skillName.toLowerCase().trim();
+    return this.allowedSkills.some((skill) => skill.toLowerCase().trim() === normalized);
+  }
+
+  recordCandidateAnswer() {
+    this.questionsAnswered++;
+  }
+
   async handleFunctionCall(functionName, args) {
     console.log(`🤖 AI called function: ${functionName}`, args);
 
     switch (functionName) {
       case 'select_skill':
+        if (!this.isAllowedSkill(args.skill_name)) {
+          return {
+            status: 'error',
+            message: `You must choose from: ${this.allowedSkills.join(', ')}`,
+          };
+        }
+
         this.selectedSkill = args.skill_name;
         this.topicsCovered.add(args.skill_name);
-        
-        console.log(`✅ User selected skill: ${args.skill_name}`);
-        
+
         return {
           status: 'skill_selected',
           skill: args.skill_name,
-          message: `Skill selected: ${args.skill_name}`
+          message: `Skill selected: ${args.skill_name}`,
         };
 
       case 'ask_question':
-        // Validate they're asking about the selected skill
+        if (!this.isAllowedSkill(args.skill)) {
+          return {
+            status: 'error',
+            message: `You must ask about one of: ${this.allowedSkills.join(', ')}`,
+          };
+        }
+
         if (this.selectedSkill && args.skill.toLowerCase() !== this.selectedSkill.toLowerCase()) {
           return {
             status: 'error',
-            message: `You must ask about ${this.selectedSkill}, not ${args.skill}`
+            message: `You must ask about ${this.selectedSkill}, not ${args.skill}`,
           };
         }
-        
+
         this.questionsAsked++;
         this.currentTopic = args.skill;
-        
+        this.topicsCovered.add(args.skill);
+
         return {
           status: 'question_asked',
           count: this.questionsAsked,
-          max: this.maxQuestions,
+          answered: this.questionsAnswered,
           skill: args.skill,
-          message: `Question ${this.questionsAsked}/${this.maxQuestions} asked about ${args.skill}`
+          message: `Question ${this.questionsAsked} asked about ${args.skill}`,
         };
 
       case 'probe_deeper':
         return {
           status: 'probing_deeper',
           reason: args.reason,
-          message: 'Following up on previous answer'
+          message: 'Following up on previous answer',
         };
 
       case 'respond_to_question':
         return {
           status: 'answered_question',
-          message: 'Answered candidate question and continuing interview'
+          message: 'Answered candidate question and continuing interview',
         };
 
       case 'conclude_interview':
@@ -250,8 +281,9 @@ Start by greeting them and asking which skill to practice.`;
           status: 'interview_concluded',
           reason: args.reason,
           questions_asked: this.questionsAsked,
+          questions_answered: this.questionsAnswered,
           topics_covered: Array.from(this.topicsCovered),
-          message: 'Interview completed'
+          message: 'Interview completed',
         };
 
       default:
@@ -259,27 +291,25 @@ Start by greeting them and asking which skill to practice.`;
     }
   }
 
-  /**
-   * Log conversation turn
-   */
   logTurn(speaker, message, metadata = {}) {
     this.conversationHistory.push({
       timestamp: new Date().toISOString(),
       speaker,
       message,
-      metadata
+      metadata,
     });
+
+    if (speaker === 'candidate' && message?.trim()) {
+      this.recordCandidateAnswer();
+    }
   }
 
-  /**
-   * Get interview statistics
-   */
   getStats() {
     return {
       questionsAsked: this.questionsAsked,
-      maxQuestions: this.maxQuestions,
+      questionsAnswered: this.questionsAnswered,
       topicsCovered: Array.from(this.topicsCovered),
-      conversationTurns: this.conversationHistory.length
+      conversationTurns: this.conversationHistory.length,
     };
   }
 }

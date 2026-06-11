@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\HttpClientOptions;
 use GuzzleHttp\Client;
 use Illuminate\Support\Facades\Log;
 
@@ -13,9 +14,9 @@ class EmbeddingService
 
     public function __construct()
     {
-        $this->client = new Client();
+        $this->client = new Client(HttpClientOptions::guzzle());
         $this->apiKey = env('OPENAI_API_KEY');
-        $this->model = 'text-embedding-ada-002'; // 1536 dimensions
+        $this->model = config('ai.embedding_model', 'text-embedding-ada-002');
     }
 
     /**
@@ -80,33 +81,57 @@ class EmbeddingService
     }
 
     /**
+     * Normalize stored embedding (JSON string or array from Eloquent cast).
+     */
+    public function normalizeEmbedding(mixed $embedding): ?array
+    {
+        if (is_array($embedding)) {
+            return $embedding;
+        }
+
+        if (is_string($embedding) && $embedding !== '') {
+            $decoded = json_decode($embedding, true);
+            return is_array($decoded) ? $decoded : null;
+        }
+
+        return null;
+    }
+
+    /**
      * Find most similar items from a list
      *
      * @param array $queryEmbedding
      * @param array $items Array of items with 'embedding' key
      * @param int $topK Number of top results to return
+     * @param float|null $minSimilarity Optional minimum cosine similarity
      * @return array
      */
-    public function findSimilar(array $queryEmbedding, array $items, int $topK = 10): array
-    {
+    public function findSimilar(
+        array $queryEmbedding,
+        array $items,
+        int $topK = 10,
+        ?float $minSimilarity = null
+    ): array {
         $similarities = [];
 
         foreach ($items as $item) {
-            if (!isset($item['embedding']) || !is_array($item['embedding'])) {
+            $vector = $this->normalizeEmbedding($item['embedding'] ?? null);
+            if ($vector === null) {
                 continue;
             }
 
-            $similarity = $this->cosineSimilarity($queryEmbedding, $item['embedding']);
+            $similarity = $this->cosineSimilarity($queryEmbedding, $vector);
+            if ($minSimilarity !== null && $similarity < $minSimilarity) {
+                continue;
+            }
+
+            $item['embedding'] = $vector;
             $item['similarity_score'] = $similarity;
             $similarities[] = $item;
         }
 
-        // Sort by similarity score descending
-        usort($similarities, function ($a, $b) {
-            return $b['similarity_score'] <=> $a['similarity_score'];
-        });
+        usort($similarities, fn ($a, $b) => $b['similarity_score'] <=> $a['similarity_score']);
 
-        // Return top K results
         return array_slice($similarities, 0, $topK);
     }
 }

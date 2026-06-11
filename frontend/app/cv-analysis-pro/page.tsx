@@ -4,7 +4,6 @@ import type React from "react"
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import DashboardNav from "@/components/dashboard-nav"
 import { Button } from "@/components/ui/button"
 import { cvAnalysisService, type CVAnalysisResult } from "@/lib/cv-analysis-service"
 
@@ -213,7 +212,6 @@ export default function CVAnalysisProPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
-      <DashboardNav user={user} />
 
       <main className="px-10 py-8">
         {/* Header Section */}
@@ -515,10 +513,8 @@ export default function CVAnalysisProPage() {
           {analysis?.isValidCV !== false && (
             <Button
   onClick={() => {
-    // Ensure the CV text is saved before navigating
     if (analysis) {
-      // The CV text should already be saved from handleAnalyze
-      // Set a flag to auto-enhance on the enhance page
+      localStorage.setItem("cv_enhance_intent", "true")
       localStorage.setItem("cv_auto_enhance", "true")
     }
     router.push("/enhance-cv")

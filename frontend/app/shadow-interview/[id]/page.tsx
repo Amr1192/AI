@@ -26,8 +26,16 @@ import {
   Square,
   X
 } from "lucide-react";
-import Header from "@/components/header";
-import { Progress } from "@/components/ui/progress";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://127.0.0.1:8081";
@@ -47,9 +55,23 @@ interface AgentAction {
 
 interface InterviewStats {
   questionsAsked: number;
-  maxQuestions: number;
+  questionsAnswered: number;
   topicsCovered: string[];
   conversationTurns: number;
+}
+
+function buildStatsFromMessages(
+  messages: Message[],
+  current: InterviewStats
+): InterviewStats {
+  const answered = messages.filter((m) => m.speaker === "user" && m.text.trim()).length;
+
+  return {
+    ...current,
+    questionsAnswered: Math.max(current.questionsAnswered, answered),
+    questionsAsked: Math.max(current.questionsAsked, answered),
+    conversationTurns: messages.length,
+  };
 }
 
 export default function AgenticInterviewPage() {
@@ -61,6 +83,7 @@ export default function AgenticInterviewPage() {
 
   // Track if we're currently ending the interview
   const [isEnding, setIsEnding] = useState(false);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
 
   // WebSocket & Media References
   const wsRef = useRef<WebSocket | null>(null);
@@ -78,6 +101,11 @@ export default function AgenticInterviewPage() {
   const audioQueueRef = useRef<AudioBufferSourceNode[]>([]);
   const nextPlayTimeRef = useRef<number>(0);
   const isPlayingRef = useRef<boolean>(false);
+
+  // Mic gating — prevents speaker→mic echo from being sent as user speech
+  const isMicOnRef = useRef(true);
+  const micCaptureAllowedRef = useRef(false);
+  const micCooldownTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Audio Worklet References (for capture only)
   const audioCaptureNodeRef = useRef<AudioWorkletNode | null>(null);
@@ -101,7 +129,7 @@ export default function AgenticInterviewPage() {
   const [currentAction, setCurrentAction] = useState<string | null>(null);
   const [interviewStats, setInterviewStats] = useState<InterviewStats>({
     questionsAsked: 0,
-    maxQuestions: 8,
+    questionsAnswered: 0,
     topicsCovered: [],
     conversationTurns: 0
   });
@@ -119,6 +147,41 @@ export default function AgenticInterviewPage() {
   const [interviewStartTime, setInterviewStartTime] = useState<Date | null>(null);
   const [elapsedTime, setElapsedTime] = useState(0);
   const [aiSpeaking, setAiSpeaking] = useState(false);
+
+  const setMicCaptureAllowed = useCallback((allowed: boolean) => {
+    micCaptureAllowedRef.current = allowed;
+    const track = mediaStreamRef.current?.getAudioTracks()[0];
+    if (track) {
+      track.enabled = allowed && isMicOnRef.current;
+    }
+  }, []);
+
+  const pauseMicForAi = useCallback(() => {
+    if (micCooldownTimerRef.current) {
+      clearTimeout(micCooldownTimerRef.current);
+      micCooldownTimerRef.current = null;
+    }
+    setMicCaptureAllowed(false);
+  }, [setMicCaptureAllowed]);
+
+  const resumeMicAfterAi = useCallback(() => {
+    if (micCooldownTimerRef.current) {
+      clearTimeout(micCooldownTimerRef.current);
+    }
+    // Wait for speaker audio to finish + echo tail to decay
+    micCooldownTimerRef.current = setTimeout(() => {
+      setMicCaptureAllowed(true);
+      micCooldownTimerRef.current = null;
+    }, 600);
+  }, [setMicCaptureAllowed]);
+
+  useEffect(() => {
+    isMicOnRef.current = isMicOn;
+    const track = mediaStreamRef.current?.getAudioTracks()[0];
+    if (track) {
+      track.enabled = isMicOn && micCaptureAllowedRef.current;
+    }
+  }, [isMicOn]);
 
   // Detect user scrolling
   useEffect(() => {
@@ -253,7 +316,9 @@ export default function AgenticInterviewPage() {
           noiseSuppression: true,
           autoGainControl: true,
           sampleRate: 24000,
-          channelCount: 1
+          channelCount: 1,
+          // @ts-expect-error — Chromium echo suppression for same-tab playback
+          suppressLocalAudioPlayback: true,
         },
         video: {
           width: { ideal: 1280 },
@@ -264,6 +329,13 @@ export default function AgenticInterviewPage() {
       });
 
       mediaStreamRef.current = stream;
+
+      // Mic off until AI greeting finishes playing (prevents echo during startup)
+      micCaptureAllowedRef.current = false;
+      const audioTrack = stream.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = false;
+      }
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -420,18 +492,20 @@ export default function AgenticInterviewPage() {
         if (audioQueueRef.current.length === 0) {
           isPlayingRef.current = false;
           setAiSpeaking(false);
+          resumeMicAfterAi();
         }
       };
 
       if (!isPlayingRef.current) {
         isPlayingRef.current = true;
         setAiSpeaking(true);
+        pauseMicForAi();
       }
 
     } catch (err) {
       console.error('❌ Error playing audio:', err);
     }
-  }, [isSpeakerOn]);
+  }, [isSpeakerOn, pauseMicForAi, resumeMicAfterAi]);
 
   // Connect to WebSocket with skill constraints
   const connectWebSocket = useCallback(async (captureNode: AudioWorkletNode) => {
@@ -490,7 +564,12 @@ export default function AgenticInterviewPage() {
       };
 
       captureNode.port.onmessage = (event) => {
-        if (event.data.type === 'audio' && ws.readyState === WebSocket.OPEN && isMicOn) {
+        if (
+          event.data.type === 'audio' &&
+          ws.readyState === WebSocket.OPEN &&
+          isMicOnRef.current &&
+          micCaptureAllowedRef.current
+        ) {
           const audioData = event.data.data;
           const base64Audio = arrayBufferToBase64(audioData);
           ws.send(JSON.stringify({
@@ -500,7 +579,7 @@ export default function AgenticInterviewPage() {
         }
       };
     });
-  }, [interviewId, userSkills, selectedSkillIds, isMicOn]);
+  }, [interviewId, userSkills, selectedSkillIds]);
 
   // Handle WebSocket messages
   const handleWebSocketMessage = useCallback((data: string) => {
@@ -516,7 +595,7 @@ export default function AgenticInterviewPage() {
 
         case 'response.audio.done':
         case 'ai_finished_speaking':
-          console.log('🔚 AI finished speaking');
+          console.log('🔚 AI finished generating audio');
           break;
 
         case 'transcript':
@@ -528,6 +607,18 @@ export default function AgenticInterviewPage() {
 
         case 'agent_action':
           handleAgentAction(message);
+          break;
+
+        case 'stats_update':
+          if (message.stats) {
+            setInterviewStats((prev) => ({
+              ...prev,
+              questionsAsked: Math.max(prev.questionsAsked, message.stats.questionsAsked ?? 0),
+              questionsAnswered: Math.max(prev.questionsAnswered, message.stats.questionsAnswered ?? 0),
+              topicsCovered: message.stats.topicsCovered ?? prev.topicsCovered,
+              conversationTurns: message.stats.conversationTurns ?? prev.conversationTurns,
+            }));
+          }
           break;
 
         case 'interview_complete':
@@ -546,11 +637,16 @@ export default function AgenticInterviewPage() {
 
   // Add message to conversation
   const addMessage = useCallback((speaker: 'ai' | 'user', text: string) => {
-    setMessages(prev => [...prev, {
-      speaker,
-      text,
-      timestamp: new Date()
-    }]);
+    setMessages(prev => {
+      const next = [...prev, {
+        speaker,
+        text,
+        timestamp: new Date()
+      }];
+
+      setInterviewStats((stats) => buildStatsFromMessages(next, stats));
+      return next;
+    });
   }, []);
 
   // Handle agent action
@@ -565,10 +661,11 @@ export default function AgenticInterviewPage() {
     setAgentActions(prev => [...prev, action]);
     setCurrentAction(message.action);
 
-    if (message.result.count !== undefined) {
+    if (message.result.count !== undefined || message.result.answered !== undefined) {
       setInterviewStats(prev => ({
         ...prev,
-        questionsAsked: message.result.count
+        questionsAsked: Math.max(prev.questionsAsked, message.result.count ?? 0),
+        questionsAnswered: Math.max(prev.questionsAnswered, message.result.answered ?? prev.questionsAnswered),
       }));
     }
 
@@ -624,6 +721,8 @@ export default function AgenticInterviewPage() {
         metadata: {}
       }));
 
+      const finalStats = buildStatsFromMessages(messages, interviewStats);
+
       const response = await fetch(`${API_BASE}/api/interviews/${interviewId}/save-conversation`, {
         method: 'POST',
         headers: {
@@ -632,7 +731,7 @@ export default function AgenticInterviewPage() {
         body: JSON.stringify({
           sessionId: `session-${Date.now()}`,
           conversation: conversationHistory,
-          stats: interviewStats
+          stats: finalStats
         })
       });
 
@@ -726,14 +825,35 @@ export default function AgenticInterviewPage() {
     router.push(reportUrl);
   }, [isEnding, interviewId, router, messages, saveConversationHistory]);
 
+  const requestEndInterview = useCallback(() => {
+    if (isEnding) {
+      return;
+    }
+
+    const answered = buildStatsFromMessages(messages, interviewStats).questionsAnswered;
+    if (answered < 1) {
+      setShowEndConfirm(true);
+      return;
+    }
+
+    endInterview();
+  }, [isEnding, messages, interviewStats, endInterview]);
+
+  const confirmEndInterview = useCallback(() => {
+    setShowEndConfirm(false);
+    endInterview();
+  }, [endInterview]);
+
   // Toggle controls
   const toggleMic = useCallback(() => {
     if (mediaStreamRef.current) {
       const audioTrack = mediaStreamRef.current.getAudioTracks()[0];
       if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsMicOn(audioTrack.enabled);
-        console.log(`🎤 Mic ${audioTrack.enabled ? 'ON' : 'OFF'}`);
+        const wantOn = !isMicOnRef.current;
+        isMicOnRef.current = wantOn;
+        audioTrack.enabled = wantOn && micCaptureAllowedRef.current;
+        setIsMicOn(wantOn);
+        console.log(`🎤 Mic ${wantOn ? 'ON' : 'OFF'}`);
       }
     }
   }, []);
@@ -824,10 +944,8 @@ export default function AgenticInterviewPage() {
   }
 
   return (
-    <div className="flex h-screen w-full flex-col bg-background">
-      <Header />
-
-      <div className="flex flex-1 overflow-hidden pt-16">
+    <div className="flex min-h-[calc(100dvh-3.5rem)] w-full flex-col bg-background">
+      <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
         <aside className="w-1/4 min-w-[320px] border-r border-border bg-card p-6 flex flex-col justify-between overflow-y-auto">
           <div>
@@ -868,15 +986,16 @@ export default function AgenticInterviewPage() {
                 Interview Progress
               </h3>
               <div className="space-y-3">
-                <div>
-                  <div className="flex justify-between text-sm mb-2">
-                    <span>Questions Asked</span>
-                    <span className="font-semibold">{interviewStats.questionsAsked}/{interviewStats.maxQuestions}</span>
+                <div className="rounded-xl border border-purple-100 bg-purple-50 p-4">
+                  <div className="flex justify-between text-sm mb-1">
+                    <span>Questions Answered</span>
+                    <span className="font-semibold text-purple-700">
+                      {interviewStats.questionsAnswered}
+                    </span>
                   </div>
-                  <Progress 
-                    value={(interviewStats.questionsAsked / interviewStats.maxQuestions) * 100}
-                    className="h-2"
-                  />
+                  <p className="text-xs text-muted-foreground">
+                    Open practice — continue as long as you like. Report unlocks after 1 answer.
+                  </p>
                 </div>
               </div>
             </div>
@@ -969,13 +1088,11 @@ export default function AgenticInterviewPage() {
           {/* Video Section */}
           <div className="col-span-2 flex flex-col">
             <div className="bg-gray-900 rounded-xl flex-1 flex flex-col justify-center items-center relative overflow-hidden">
-              {/* Progress Bar */}
-              <div className="absolute top-0 left-0 w-full h-2 bg-gray-700 z-10">
-                <div 
-                  className="h-full bg-purple-500 transition-all"
-                  style={{ width: `${(interviewStats.questionsAsked / interviewStats.maxQuestions) * 100}%` }}
-                ></div>
-              </div>
+              {interviewStats.questionsAnswered > 0 && (
+                <div className="absolute top-4 left-4 z-10 rounded-full bg-black/50 px-3 py-1 text-sm text-white backdrop-blur-sm">
+                  {interviewStats.questionsAnswered} answered
+                </div>
+              )}
 
               {/* Video Feed */}
               <video
@@ -1077,7 +1194,7 @@ export default function AgenticInterviewPage() {
                   </Button>
                 ) : (
                   <button
-                    onClick={endInterview}
+                    onClick={requestEndInterview}
                     disabled={isEnding}
                     className={`p-4 rounded-full text-white transition ${
                       isEnding 
@@ -1130,10 +1247,10 @@ export default function AgenticInterviewPage() {
             {isInterviewActive && (
               <div className="mt-4 flex gap-3">
                 <Button
-                  onClick={endInterview}
+                  onClick={requestEndInterview}
                   disabled={isEnding}
                   size="lg"
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white"
+                  className="flex-1 bg-gradient-to-br from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white"
                 >
                   {isEnding ? (
                     <>
@@ -1210,6 +1327,31 @@ export default function AgenticInterviewPage() {
           </aside>
         </main>
       </div>
+
+      <AlertDialog open={showEndConfirm} onOpenChange={setShowEndConfirm}>
+        <AlertDialogContent className="bg-white border border-purple-100 rounded-3xl shadow-2xl sm:max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-xl font-bold text-slate-800">
+              End interview early?
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-600">
+              You have not answered any interview questions yet, so no report will
+              be available. End the interview anyway?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="gap-2 sm:gap-2">
+            <AlertDialogCancel className="border-purple-200 text-slate-700 hover:bg-purple-50 rounded-xl">
+              Continue Interview
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmEndInterview}
+              className="bg-gradient-to-br from-purple-400 to-purple-600 hover:from-purple-500 hover:to-purple-700 text-white rounded-xl border-0"
+            >
+              End Anyway
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

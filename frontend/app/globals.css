@@ -4,21 +4,20 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* Updated color scheme for CV Master AI */
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
+  --background: oklch(0.99 0.002 280);
+  --foreground: oklch(0.18 0.02 280);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --card-foreground: oklch(0.18 0.02 280);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: #1a1a3e;
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: #7c3aed;
-  --accent-foreground: oklch(0.985 0 0);
+  --popover-foreground: oklch(0.18 0.02 280);
+  --primary: oklch(0.28 0.06 280);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.96 0.01 280);
+  --secondary-foreground: oklch(0.28 0.04 280);
+  --muted: oklch(0.96 0.008 280);
+  --muted-foreground: oklch(0.5 0.02 280);
+  --accent: oklch(0.55 0.2 295);
+  --accent-foreground: oklch(0.99 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);

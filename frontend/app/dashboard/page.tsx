@@ -4,7 +4,6 @@ import { authService } from "@/lib/authService";
 import { useToast } from "@/components/ui/use-toast";
 import { Button } from "@/components/ui/button";
 import { useRouter } from "next/navigation";
-import DashboardNav from "@/components/dashboard-nav";
 import { Card, CardHeader, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import {
@@ -209,8 +208,6 @@ export default function AdminDashboard() {
         <div className="absolute top-40 left-20 w-72 h-72 bg-purple-100 rounded-full mix-blend-multiply filter blur-3xl opacity-40 animate-[pulse_5s_ease-in-out_infinite_2s]"></div>
         <div className="absolute bottom-20 right-1/3 w-96 h-96 bg-purple-50 rounded-full mix-blend-multiply filter blur-3xl opacity-30 animate-[pulse_6s_ease-in-out_infinite_3s]"></div>
       </div>
-
-      <DashboardNav user={user} />
 
       <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8 relative z-10">
         {/* Header Section */}

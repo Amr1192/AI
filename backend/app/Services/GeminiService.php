@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Support\HttpClientOptions;
 use GuzzleHttp\Client;
 use Illuminate\Support\Facades\Log;
 
@@ -11,7 +12,7 @@ class GeminiService
 
     public function __construct()
     {
-        $this->client = new Client();
+        $this->client = new Client(HttpClientOptions::guzzle());
     }
 
     /**

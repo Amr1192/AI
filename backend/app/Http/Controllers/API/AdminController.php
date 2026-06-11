@@ -70,7 +70,7 @@ class AdminController extends Controller
             'skills' => 'sometimes|array',
             'skills.*.title' => 'required_with:skills|string|max:255',
             'skills.*.years_of_experience' => 'required_with:skills|integer|min:0',
-            'skills.*.proficiency_level' => 'required_with:skills|in:beginner,intermediate,expert',
+            'skills.*.proficiency_level' => 'required_with:skills|in:beginner,intermediate,advanced,expert',
         ]);
 
         if ($validator->fails()) {
@@ -253,7 +253,7 @@ $prompt = "
         ";
             $response = Http::withToken(env('OPENAI_API_KEY'))
                 ->post('https://api.openai.com/v1/chat/completions', [
-                    'model' => 'gpt-4o-mini',
+                    'model' => config('ai.chat_model', 'gpt-4o-mini'),
                     'messages' => [
                         ['role' => 'system', 'content' => 'You are an HR assistant'],
                         ['role' => 'user', 'content' => $prompt],

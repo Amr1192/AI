@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Log;
 
 class InterviewController extends Controller
 {
+    private const MIN_QUESTIONS_FOR_REPORT = 1;
+
     /**
      * POST /api/interviews/start
      * Creates an interview with AI-generated questions based on user skills.
@@ -100,7 +102,7 @@ PROMPT;
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $apiKey,
             ])->timeout(60)->post('https://api.openai.com/v1/chat/completions', [
-                'model' => 'gpt-5-mini',
+                'model' => config('ai.analysis_model', 'gpt-5-mini'),
                 'messages' => [
                     ['role' => 'system', 'content' => 'You are a senior technical interviewer with 20+ years of experience.'],
                     ['role' => 'user', 'content' => $prompt],
@@ -165,14 +167,27 @@ PROMPT;
                 $questionSet = json_decode($row->question_set, true) ?: [];
             }
 
+            $stats = json_decode($row->stats ?? '{}', true) ?: [];
+            $selectedSkillIds = json_decode($row->selected_skill_ids ?? '[]', true) ?: [];
+            $comprehensiveAnalysis = !empty($row->comprehensive_analysis)
+                ? json_decode($row->comprehensive_analysis, true)
+                : null;
+            $eligibility = $this->getReportEligibility($row);
+
             return response()->json([
-                'id'               => $row->id,
-                'user_id'          => $row->user_id,
-                'status'           => $row->status ?? 'created',
-                'question_set'     => $questionSet,
-                'current_question' => (int) ($row->current_question ?? 0),
-                'overall'          => $overallFeedback,
-                'answers'          => $answers,
+                'id'                     => $row->id,
+                'user_id'                => $row->user_id,
+                'selected_skill_ids'     => $selectedSkillIds,
+                'status'                 => $row->status ?? 'created',
+                'question_set'           => $questionSet,
+                'current_question'       => (int) ($row->current_question ?? 0),
+                'overall'                => $overallFeedback,
+                'answers'                => $answers,
+                'stats'                  => $stats,
+                'comprehensive_analysis' => $comprehensiveAnalysis,
+                'analyzed_at'            => $row->analyzed_at ?? null,
+                'report_eligible'        => $eligibility['eligible'],
+                'report_eligibility'     => $eligibility,
             ]);
         } catch (\Exception $e) {
             Log::error('Error in show() method', [
@@ -249,10 +264,15 @@ PROMPT;
             'updated_at'        => now()
         ]);
 
-        // ✅ Trigger video analysis in background
-        dispatch(function () use ($id, $sampledFrames) {
+        // Run inline — avoid queue `jobs` table (conflicts with job listings table)
+        try {
             $this->analyzeVideoFrames($id, $sampledFrames);
-        });
+        } catch (\Throwable $e) {
+            Log::error('Video analysis failed', [
+                'interview_id' => $id,
+                'error'        => $e->getMessage(),
+            ]);
+        }
 
         return response()->json([
             'message'     => 'Video frames saved successfully',
@@ -343,7 +363,7 @@ PROMPT;
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $apiKey,
             ])->timeout(120)->post('https://api.openai.com/v1/chat/completions', [
-                'model'                 => 'gpt-5-mini',
+                'model'                 => config('ai.analysis_model', 'gpt-5-mini'),
                 'messages'              => $messages,
                 'max_completion_tokens' => 2000
             ]);
@@ -389,12 +409,30 @@ PROMPT;
                 return response()->json(['error' => 'Interview not found'], 404);
             }
 
+            $eligibility = $this->getReportEligibility($interview);
+            if (!$eligibility['eligible']) {
+                return response()->json([
+                    'error'              => 'report_not_available',
+                    'message'            => $eligibility['message'],
+                    'questions_asked'    => $eligibility['questions_asked'],
+                    'minimum_required'   => $eligibility['minimum_required'],
+                ], 422);
+            }
+
+            if (!empty($interview->comprehensive_analysis)) {
+                $existing = json_decode($interview->comprehensive_analysis, true);
+                if (is_array($existing) && $this->hasUsableAnalysis($existing)) {
+                    return response()->json([
+                        'status'   => 'success',
+                        'analysis' => $existing,
+                        'model'    => $existing['model_used'] ?? config('ai.analysis_model', 'gpt-5-mini'),
+                        'cached'   => true,
+                    ]);
+                }
+            }
+
             // Get conversation history
             $conversation = json_decode($interview->conversation_history ?? '[]', true);
-            
-            if (empty($conversation)) {
-                return response()->json(['error' => 'No conversation data'], 400);
-            }
 
             // Get user skills
             $selectedSkillIds = json_decode($interview->selected_skill_ids ?? '[]', true);
@@ -538,7 +576,7 @@ PROMPT;
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $apiKey,
             ])->timeout(180)->post('https://api.openai.com/v1/chat/completions', [
-                'model'                 => 'gpt-5-mini',
+                'model'                 => config('ai.analysis_model', 'gpt-5-mini'),
                 'messages'              => [
                     ['role' => 'system', 'content' => 'You are a world-class technical interviewer and career coach who provides deeply insightful, evidence-based feedback that helps people grow.'],
                     ['role' => 'user', 'content' => $prompt],
@@ -554,9 +592,13 @@ PROMPT;
             $jsonContent = preg_replace('/```json\s*|\s*```/', '', $jsonContent);
             $analysis = json_decode($jsonContent, true);
 
-            if (!$analysis) {
-                throw new \Exception('Invalid JSON from GPT-5');
+            if (!$analysis || !$this->isValidComprehensiveAnalysis($analysis)) {
+                throw new \Exception('AI returned an incomplete analysis. Please try again.');
             }
+
+            $analysis['analysis_source'] = 'ai';
+            $analysis['generated_at'] = now()->toIso8601String();
+            $analysis['model_used'] = config('ai.analysis_model', 'gpt-5-mini');
 
             // Merge video analysis if available
             if ($videoAnalysis) {
@@ -573,7 +615,7 @@ PROMPT;
             return response()->json([
                 'status'   => 'success',
                 'analysis' => $analysis,
-                'model'    => 'gpt-5-mini'
+                'model'    => config('ai.analysis_model', 'gpt-5-mini')
             ]);
 
         } catch (\Throwable $e) {
@@ -587,5 +629,92 @@ PROMPT;
                 'message' => $e->getMessage()
             ], 500);
         }
+    }
+
+    private function hasUsableAnalysis(array $analysis): bool
+    {
+        if (($analysis['analysis_source'] ?? '') === 'fallback') {
+            return false;
+        }
+
+        if (!empty($analysis['overall_score']) && (int) $analysis['overall_score'] > 0) {
+            return true;
+        }
+
+        if (!empty($analysis['final_verdict']) && is_string($analysis['final_verdict'])) {
+            return true;
+        }
+
+        return !empty($analysis['strengths']) && is_array($analysis['strengths']);
+    }
+
+    private function isValidComprehensiveAnalysis(array $analysis): bool
+    {
+        if (!$this->hasUsableAnalysis($analysis)) {
+            return false;
+        }
+
+        if (empty($analysis['technical_assessment']) || !is_array($analysis['technical_assessment'])) {
+            return false;
+        }
+
+        return true;
+    }
+
+    private function countAnsweredQuestions(array $conversation, array $stats = []): int
+    {
+        $fromStats = (int) ($stats['questionsAnswered'] ?? $stats['questionsAsked'] ?? 0);
+
+        $fromConversation = count(array_filter($conversation, function ($turn) {
+            $speaker = strtolower((string) ($turn['speaker'] ?? ''));
+            $message = trim((string) ($turn['message'] ?? ''));
+
+            return $message !== '' && in_array($speaker, ['candidate', 'user'], true);
+        }));
+
+        return max($fromStats, $fromConversation);
+    }
+
+    private function getReportEligibility(object $interview): array
+    {
+        $conversation = json_decode($interview->conversation_history ?? '[]', true) ?: [];
+        $stats = json_decode($interview->stats ?? '{}', true) ?: [];
+        $questionsAnswered = $this->countAnsweredQuestions($conversation, $stats);
+        $minimumRequired = self::MIN_QUESTIONS_FOR_REPORT;
+
+        if (empty($conversation)) {
+            return [
+                'eligible'           => false,
+                'reason'             => 'no_conversation',
+                'message'            => "No interview conversation was saved. Answer at least {$minimumRequired} question before a report can be generated.",
+                'questions_asked'    => 0,
+                'questions_answered' => 0,
+                'minimum_required'   => $minimumRequired,
+            ];
+        }
+
+        if ($questionsAnswered < $minimumRequired) {
+            $message = $questionsAnswered === 0
+                ? "You haven't answered any interview questions yet. A report requires at least {$minimumRequired} answered question to generate meaningful feedback."
+                : "You completed {$questionsAnswered} of {$minimumRequired} required interview questions. Finish at least {$minimumRequired} question before requesting a report.";
+
+            return [
+                'eligible'           => false,
+                'reason'             => 'insufficient_questions',
+                'message'            => $message,
+                'questions_asked'    => $questionsAnswered,
+                'questions_answered' => $questionsAnswered,
+                'minimum_required'   => $minimumRequired,
+            ];
+        }
+
+        return [
+            'eligible'           => true,
+            'reason'             => null,
+            'message'            => null,
+            'questions_asked'    => $questionsAnswered,
+            'questions_answered' => $questionsAnswered,
+            'minimum_required'   => $minimumRequired,
+        ];
     }
 }

@@ -21,13 +21,42 @@ use App\Http\Controllers\UserCvController;
 */
 Route::get('/check-key', function () {
     $key = env('OPENAI_API_KEY');
+    if (!$key) {
+        return response()->json(['ok' => false, 'error' => 'OPENAI_API_KEY not set'], 500);
+    }
+
     $project = env('OPENAI_PROJECT_ID');
     $headers = ['Authorization' => 'Bearer ' . $key];
-    if ($project) $headers['OpenAI-Project'] = $project;
-    $res = Http::withHeaders($headers)->get('https://api.openai.com/v1/models');
+    if ($project) {
+        $headers['OpenAI-Project'] = $project;
+    }
+
+    $res = Http::withHeaders($headers)->timeout(20)->get('https://api.openai.com/v1/models');
+    if (!$res->successful()) {
+        return response()->json(['ok' => false, 'status' => $res->status(), 'error' => $res->body()], 502);
+    }
+
+    $available = collect($res->json('data', []))->pluck('id');
+    $required = [
+        'chat'         => config('ai.chat_model'),
+        'analysis'     => config('ai.analysis_model'),
+        'embedding'    => config('ai.embedding_model'),
+        'rag'          => config('ai.rag_model'),
+        'realtime'     => config('ai.realtime_model'),
+        'transcription'=> config('ai.transcription_model'),
+    ];
+
+    $status = [];
+    foreach ($required as $role => $model) {
+        $status[$role] = ['model' => $model, 'available' => $available->contains($model)];
+    }
+
+    $allOk = collect($status)->every(fn ($s) => $s['available']);
+
     return response()->json([
-        'status' => $res->status(),
-        'body'   => $res->json(),
+        'ok'              => $allOk,
+        'models_configured' => $status,
+        'total_models'    => $available->count(),
     ]);
 });
 
@@ -71,18 +100,6 @@ Route::middleware('auth:sanctum')->prefix('rag')->group(function () {
     // Admin Operations (FIXED: removed duplicate /rag prefix)
     Route::post('/jobs/generate-all-embeddings', [RagController::class, 'generateAllJobEmbeddings']);
     Route::post('/profiles/generate-all-embeddings', [RagController::class, 'generateAllProfileEmbeddings']);
-});
-
-/*
-|--------------------------------------------------------------------------
-| RAG Public Routes (MUST come AFTER protected routes)
-|--------------------------------------------------------------------------
-*/
-Route::prefix('rag')->group(function () {
-    // More specific route first
-    Route::get('/alljobs', [RagController::class, 'getJobs']);
-    // Less specific route last (catches anything else)
-    Route::get('/jobs/{profileId?}', [RagController::class, 'getAllJobs']);
 });
 
 /*

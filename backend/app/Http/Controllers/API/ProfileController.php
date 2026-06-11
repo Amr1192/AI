@@ -4,12 +4,16 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\Profile;
+use App\Services\ProfileEmbeddingService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 
 class ProfileController extends Controller
 {
+    public function __construct(
+        protected ProfileEmbeddingService $profileEmbeddingService
+    ) {}
    public function show(Request $request)
 {
     $user = $request->user()->load([
@@ -97,9 +101,11 @@ class ProfileController extends Controller
 
         $profile->save();
 
+        $this->profileEmbeddingService->refreshForUserId($request->user()->id);
+
         return response()->json([
             'message' => 'Profile updated successfully',
-            'profile' => $profile,
+            'profile' => $profile->fresh(),
         ]);
     }
 
@@ -120,6 +126,7 @@ class ProfileController extends Controller
         }
 
         $education = $request->user()->education()->create($request->all());
+        $this->profileEmbeddingService->refreshForUserId($request->user()->id);
 
         return response()->json([
             'message' => 'Education added successfully',
@@ -145,6 +152,7 @@ class ProfileController extends Controller
         }
 
         $workExperience = $request->user()->workExperiences()->create($request->all());
+        $this->profileEmbeddingService->refreshForUserId($request->user()->id);
 
         return response()->json([
             'message' => 'Work experience added successfully',
@@ -158,7 +166,7 @@ class ProfileController extends Controller
             'skills' => 'required|array',
             'skills.*.title' => 'required|string|max:255',
             'skills.*.years_of_experience' => 'required|integer|min:0',
-            'skills.*.proficiency_level' => 'required|in:beginner,intermediate,expert',
+            'skills.*.proficiency_level' => 'required|in:beginner,intermediate,advanced,expert',
         ]);
 
         if ($validator->fails()) {
@@ -169,6 +177,8 @@ class ProfileController extends Controller
         foreach ($request->skills as $skill) {
             $addedSkills[] = $request->user()->skills()->create($skill);
         }
+
+        $this->profileEmbeddingService->refreshForUserId($request->user()->id);
 
         return response()->json([
             'message' => 'Skills added successfully',
@@ -185,6 +195,7 @@ class ProfileController extends Controller
         }
 
         $skill->delete();
+        $this->profileEmbeddingService->refreshForUserId($request->user()->id);
 
         return response()->json(['message' => 'Skill deleted successfully']);
     }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -29,9 +29,70 @@ import {
   Meh,
   X
 } from "lucide-react";
-import Header from "@/components/header";
+import { API_BASE } from "@/lib/api";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+const REPORT_CACHE_PREFIX = "interview_report_cache_";
+const ANALYZE_TIMEOUT_MS = 180_000;
+
+function cacheKey(interviewId: string) {
+  return `${REPORT_CACHE_PREFIX}${interviewId}`;
+}
+
+function readCachedReport(interviewId: string): Analysis | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(cacheKey(interviewId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Analysis;
+    return isDisplayableAnalysis(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedReport(interviewId: string, data: Analysis) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(cacheKey(interviewId), JSON.stringify(data));
+  } catch {
+    // ignore quota errors
+  }
+}
+
+function isDisplayableAnalysis(data: Analysis | null): data is Analysis {
+  if (!data || typeof data !== "object") return false;
+  if (data.analysis_source === "fallback") return false;
+  if (data.overall_score && data.overall_score > 0) return true;
+  if (data.final_verdict?.trim()) return true;
+  if (Array.isArray(data.strengths) && data.strengths.length > 0) return true;
+  return false;
+}
+
+async function apiFetch(
+  url: string,
+  options?: RequestInit,
+  timeoutMs = 30_000
+): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function formatFetchError(err: unknown): string {
+  if (err instanceof DOMException && err.name === "AbortError") {
+    return "The request timed out. Your report may still be generating — try again in a moment.";
+  }
+  if (err instanceof TypeError && err.message === "Failed to fetch") {
+    return "Cannot reach the server. Make sure the Laravel backend is running on port 8000, then retry.";
+  }
+  if (err instanceof Error) return err.message;
+  return "Something went wrong loading your report.";
+}
 
 interface Analysis {
   overall_score: number;
@@ -70,6 +131,9 @@ interface Analysis {
   recommended_resources: string[];
   practice_questions: string[];
   final_verdict: string;
+  analysis_source?: string;
+  model_used?: string;
+  generated_at?: string;
   video_analysis?: {
     eye_contact: { score: number; assessment: string };
     confidence_level: { score: number; assessment: string };
@@ -92,62 +156,139 @@ export default function InterviewReportPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ineligible, setIneligible] = useState<{
+    message: string;
+    questionsAsked: number;
+    minimumRequired: number;
+  } | null>(null);
+  const [usingCache, setUsingCache] = useState(false);
 
-  useEffect(() => {
+  const loadAnalysis = useCallback(async (opts?: { skipCache?: boolean }) => {
     if (!interviewId) return;
 
-    const loadAnalysis = async () => {
-      try {
-        setIsLoading(true);
+    setError(null);
+    setIneligible(null);
 
-        // Check if analysis exists
-        const interviewRes = await fetch(`${API_BASE}/api/interviews/${interviewId}`);
-        
-        if (!interviewRes.ok) {
-          throw new Error('Failed to load interview');
-        }
+    let cached: Analysis | null = !opts?.skipCache
+      ? readCachedReport(interviewId)
+      : null;
+    if (cached) {
+      setAnalysis(cached);
+      setUsingCache(true);
+      setIsLoading(false);
+    } else {
+      setIsLoading(true);
+      setAnalysis(null);
+    }
 
-        const interviewData = await interviewRes.json();
+    try {
+      const interviewRes = await apiFetch(
+        `${API_BASE}/api/interviews/${interviewId}`,
+        undefined,
+        30_000
+      );
 
-        // Check if comprehensive analysis exists
-        if (interviewData.comprehensive_analysis) {
-          const parsed = typeof interviewData.comprehensive_analysis === 'string' 
+      if (!interviewRes.ok) {
+        throw new Error("Failed to load interview from the server.");
+      }
+
+      const interviewData = await interviewRes.json();
+
+      if (interviewData.report_eligible === false) {
+        const eligibility = interviewData.report_eligibility ?? {};
+        setIneligible({
+          message:
+            eligibility.message ||
+            "This interview is not eligible for a report yet.",
+          questionsAsked: eligibility.questions_asked ?? 0,
+          minimumRequired: eligibility.minimum_required ?? 1,
+        });
+        setIsLoading(false);
+        setIsAnalyzing(false);
+        return;
+      }
+
+      if (interviewData.comprehensive_analysis) {
+        const parsed =
+          typeof interviewData.comprehensive_analysis === "string"
             ? JSON.parse(interviewData.comprehensive_analysis)
             : interviewData.comprehensive_analysis;
-          
+
+        if (isDisplayableAnalysis(parsed)) {
           setAnalysis(parsed);
+          writeCachedReport(interviewId, parsed);
+          setUsingCache(false);
           setIsLoading(false);
+          setIsAnalyzing(false);
+          return;
+        }
+      }
+
+      if (cached) {
+        // Keep showing cached report; don't block on regeneration
+        return;
+      }
+
+      setIsAnalyzing(true);
+      setIsLoading(false);
+
+      const analysisRes = await apiFetch(
+        `${API_BASE}/api/interviews/${interviewId}/analyze`,
+        { method: "POST" },
+        ANALYZE_TIMEOUT_MS
+      );
+
+      if (!analysisRes.ok) {
+        const errorBody = await analysisRes.json().catch(() => ({}));
+
+        if (
+          analysisRes.status === 422 &&
+          errorBody.error === "report_not_available"
+        ) {
+          setIneligible({
+            message:
+              errorBody.message ||
+              "This interview is not eligible for a report yet.",
+            questionsAsked: errorBody.questions_asked ?? 0,
+            minimumRequired: errorBody.minimum_required ?? 1,
+          });
+          setIsAnalyzing(false);
           return;
         }
 
-        // No analysis yet - trigger it
-        setIsAnalyzing(true);
-        console.log('🔍 No analysis found, triggering GPT-5 analysis...');
-
-        const analysisRes = await fetch(`${API_BASE}/api/interviews/${interviewId}/analyze`, {
-          method: 'POST'
-        });
-
-        if (!analysisRes.ok) {
-          throw new Error('Analysis failed');
-        }
-
-        const analysisData = await analysisRes.json();
-        
-        setAnalysis(analysisData.analysis);
-        setIsAnalyzing(false);
-        setIsLoading(false);
-
-      } catch (e: any) {
-        console.error('❌ Error loading analysis:', e);
-        setError(e.message);
-        setIsLoading(false);
-        setIsAnalyzing(false);
+        throw new Error(errorBody.message || "Analysis failed");
       }
-    };
 
-    loadAnalysis();
+      const analysisData = await analysisRes.json();
+
+      if (!isDisplayableAnalysis(analysisData.analysis)) {
+        throw new Error("AI analysis was incomplete. Please try again.");
+      }
+
+      setAnalysis(analysisData.analysis);
+      writeCachedReport(interviewId, analysisData.analysis);
+      setUsingCache(false);
+      setIsAnalyzing(false);
+    } catch (e: unknown) {
+      console.error("Error loading analysis:", e);
+
+      if (cached) {
+        setUsingCache(true);
+        setError(
+          "Showing your last saved report. The server could not be reached for a fresh copy."
+        );
+      } else {
+        setError(formatFetchError(e));
+      }
+
+      setIsLoading(false);
+      setIsAnalyzing(false);
+    }
   }, [interviewId]);
+
+  useEffect(() => {
+    loadAnalysis();
+  }, [loadAnalysis]);
 
   const getScoreColor = (score: number) => {
     if (score >= 80) return 'text-green-600 bg-green-100 dark:bg-green-900/30 dark:text-green-300';
@@ -173,8 +314,7 @@ export default function InterviewReportPage() {
   // Loading state
   if (isLoading || isAnalyzing) {
     return (
-      <div className="flex h-screen w-full flex-col bg-background">
-        <Header />
+      <div className="flex min-h-[calc(100dvh-3.5rem)] w-full flex-col bg-background">
         <div className="flex-1 flex items-center justify-center p-4">
           <Card className="p-8 max-w-md w-full">
             <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto mb-4" />
@@ -193,25 +333,55 @@ export default function InterviewReportPage() {
     );
   }
 
-  // Error state
-  if (error || !analysis) {
+  // Report not available — interview ended too early
+  if (ineligible) {
     return (
-      <div className="flex h-screen w-full flex-col bg-background">
-        <Header />
+      <div className="flex min-h-[calc(100dvh-3.5rem)] w-full flex-col bg-background">
+        <div className="flex-1 flex items-center justify-center p-4">
+          <Card className="p-8 max-w-md w-full">
+            <Target className="h-12 w-12 text-amber-500 mx-auto mb-4" />
+            <h2 className="text-xl font-bold text-center mb-2">Report Not Available</h2>
+            <p className="text-muted-foreground text-center mb-4">{ineligible.message}</p>
+            <div className="rounded-lg bg-muted/50 p-4 mb-6 text-center text-sm">
+              <p className="text-muted-foreground">Progress</p>
+              <p className="text-lg font-semibold mt-1">
+                {ineligible.questionsAsked} / {ineligible.minimumRequired} required question
+                {ineligible.minimumRequired === 1 ? '' : 's'} answered
+              </p>
+            </div>
+            <Button
+              onClick={() => router.push('/interview-setup')}
+              className="w-full"
+            >
+              <ArrowLeft className="mr-2 h-4 w-4" />
+              Back to Setup
+            </Button>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  // Error state — only when we have nothing to show
+  if ((error && !analysis) || (!analysis && !isLoading && !isAnalyzing && !ineligible)) {
+    return (
+      <div className="flex min-h-[calc(100dvh-3.5rem)] w-full flex-col bg-background">
         <div className="flex-1 flex items-center justify-center p-4">
           <Card className="p-8 max-w-md w-full">
             <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
             <h2 className="text-xl font-bold text-center mb-2">Error Loading Report</h2>
-            <p className="text-muted-foreground text-center mb-6">{error || 'No analysis data available'}</p>
+            <p className="text-muted-foreground text-center mb-6">
+              {error || "No analysis data available"}
+            </p>
             <div className="flex gap-3">
               <Button
-                onClick={() => window.location.reload()}
+                onClick={() => loadAnalysis({ skipCache: true })}
                 className="flex-1"
               >
                 Retry
               </Button>
               <Button
-                onClick={() => router.push('/interview-setup')}
+                onClick={() => router.push("/interview-setup")}
                 variant="outline"
                 className="flex-1"
               >
@@ -225,31 +395,37 @@ export default function InterviewReportPage() {
     );
   }
 
-  // Safe analysis with defaults
-  const safeAnalysis = {
-    overall_score: analysis?.overall_score || 0,
-    readiness_level: analysis?.readiness_level || 'Intermediate',
-    final_verdict: analysis?.final_verdict || 'Analysis in progress...',
-    strengths: analysis?.strengths || [],
-    weaknesses: analysis?.weaknesses || [],
-    improvement_roadmap: analysis?.improvement_roadmap || [],
-    interview_tips: analysis?.interview_tips || [],
-    recommended_resources: analysis?.recommended_resources || [],
-    practice_questions: analysis?.practice_questions || [],
-    technical_assessment: analysis?.technical_assessment || { score: 0, depth: '', accuracy: '', problem_solving: '' },
-    communication_assessment: analysis?.communication_assessment || { score: 0, clarity: '', structure: '', examples: '' },
-    soft_skills: analysis?.soft_skills || { score: 0, confidence: '', engagement: '', presence: '' },
-    question_by_question: analysis?.question_by_question || [],
-    video_analysis: analysis?.video_analysis || null
-  };
+  if (!analysis || !isDisplayableAnalysis(analysis)) {
+    return (
+      <div className="flex min-h-[calc(100dvh-3.5rem)] w-full flex-col bg-background">
+        <div className="flex-1 flex items-center justify-center p-4">
+          <Card className="p-8 max-w-md w-full">
+            <AlertCircle className="h-12 w-12 text-red-500 mx-auto mb-4" />
+            <h2 className="text-xl font-bold text-center mb-2">Analysis Unavailable</h2>
+            <p className="text-muted-foreground text-center mb-6">
+              We could not generate a complete AI report for this interview. Please retry after ending the session with at least one answer saved.
+            </p>
+            <Button onClick={() => loadAnalysis({ skipCache: true })} className="w-full">
+              Retry Analysis
+            </Button>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  const report = analysis;
 
   return (
-    <div className="flex h-screen w-full flex-col bg-background overflow-y-auto">
-      <Header />
-
-      <div className="flex-1 pt-16">
+    <div className="flex min-h-[calc(100dvh-3.5rem)] w-full flex-col bg-background overflow-y-auto">
+      <div className="flex-1">
         <div className="max-w-7xl mx-auto p-6 pb-16">
-          
+          {error && analysis && (
+            <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              {error}
+            </div>
+          )}
+
           {/* Header */}
           <div className="flex items-center justify-between mb-8">
             <div>
@@ -262,7 +438,20 @@ export default function InterviewReportPage() {
                 Back to Setup
               </Button>
               <h1 className="text-4xl font-bold mb-2">Interview Report</h1>
-              <p className="text-muted-foreground">Comprehensive AI-powered analysis by GPT-5</p>
+              <p className="text-muted-foreground">
+                AI-powered analysis
+                {report.model_used ? ` · ${report.model_used}` : ""}
+              </p>
+              {report.analysis_source === "ai" && (
+                <Badge className="mt-2 bg-green-100 text-green-700 border-green-200">
+                  Verified AI Report
+                </Badge>
+              )}
+              {usingCache && (
+                <Badge className="mt-2 ml-2 bg-amber-100 text-amber-800 border-amber-200">
+                  Cached copy
+                </Badge>
+              )}
             </div>
 
             <div className="flex gap-2">
@@ -285,13 +474,13 @@ export default function InterviewReportPage() {
                   <div className="w-32 h-32 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
                     <div className="w-28 h-28 rounded-full bg-background flex items-center justify-center">
                       <span className="text-4xl font-bold bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">
-                        {safeAnalysis.overall_score}
+                        {report.overall_score}
                       </span>
                     </div>
                   </div>
                   <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2">
                     <Badge className="bg-primary text-primary-foreground font-semibold">
-                      {safeAnalysis.readiness_level.toUpperCase()}
+                      {report.readiness_level.toUpperCase()}
                     </Badge>
                   </div>
                 </div>
@@ -300,7 +489,7 @@ export default function InterviewReportPage() {
               <div className="md:col-span-3 space-y-4">
                 <div>
                   <h2 className="text-2xl font-bold mb-2">Overall Performance</h2>
-                  <p className="text-muted-foreground text-lg">{safeAnalysis.final_verdict}</p>
+                  <p className="text-muted-foreground text-lg">{report.final_verdict}</p>
                 </div>
 
                 <div className="grid grid-cols-3 gap-4">
@@ -309,7 +498,7 @@ export default function InterviewReportPage() {
                       <Brain className="h-5 w-5 text-blue-500" />
                       <span className="text-muted-foreground text-sm">Technical</span>
                     </div>
-                    <div className="text-2xl font-bold">{safeAnalysis.technical_assessment.score}</div>
+                    <div className="text-2xl font-bold">{report.technical_assessment.score}</div>
                   </div>
 
                   <div className="bg-muted rounded-lg p-4">
@@ -317,7 +506,7 @@ export default function InterviewReportPage() {
                       <MessageSquare className="h-5 w-5 text-green-500" />
                       <span className="text-muted-foreground text-sm">Communication</span>
                     </div>
-                    <div className="text-2xl font-bold">{safeAnalysis.communication_assessment.score}</div>
+                    <div className="text-2xl font-bold">{report.communication_assessment.score}</div>
                   </div>
 
                   <div className="bg-muted rounded-lg p-4">
@@ -325,7 +514,7 @@ export default function InterviewReportPage() {
                       <Award className="h-5 w-5 text-purple-500" />
                       <span className="text-muted-foreground text-sm">Soft Skills</span>
                     </div>
-                    <div className="text-2xl font-bold">{safeAnalysis.soft_skills.score}</div>
+                    <div className="text-2xl font-bold">{report.soft_skills.score}</div>
                   </div>
                 </div>
               </div>
@@ -344,8 +533,8 @@ export default function InterviewReportPage() {
               </div>
 
               <div className="space-y-3">
-                {safeAnalysis.strengths.length > 0 ? (
-                  safeAnalysis.strengths.map((strength, idx) => (
+                {report.strengths.length > 0 ? (
+                  report.strengths.map((strength, idx) => (
                     <div key={idx} className="flex items-start gap-3 bg-muted p-3 rounded-lg">
                       <CheckCircle className="h-5 w-5 text-green-500 mt-0.5 flex-shrink-0" />
                       <p className="text-sm">{strength}</p>
@@ -369,8 +558,8 @@ export default function InterviewReportPage() {
               </div>
 
               <div className="space-y-3">
-                {safeAnalysis.weaknesses.length > 0 ? (
-                  safeAnalysis.weaknesses.map((weakness, idx) => (
+                {report.weaknesses.length > 0 ? (
+                  report.weaknesses.map((weakness, idx) => (
                     <div key={idx} className="flex items-start gap-3 bg-muted p-3 rounded-lg">
                       <AlertCircle className="h-5 w-5 text-orange-500 mt-0.5 flex-shrink-0" />
                       <p className="text-sm">{weakness}</p>
@@ -386,7 +575,7 @@ export default function InterviewReportPage() {
           </div>
 
           {/* Video Analysis (if available) */}
-          {safeAnalysis.video_analysis && (
+          {report.video_analysis && (
             <Card className="p-6 bg-card border-border mb-8">
               <div className="flex items-center gap-2 mb-6">
                 <div className="p-2 rounded-lg bg-purple-500/20">
@@ -397,16 +586,16 @@ export default function InterviewReportPage() {
               </div>
 
               <div className="mb-6 p-4 bg-muted rounded-lg">
-                <p>{safeAnalysis.video_analysis.overall_impression}</p>
+                <p>{report.video_analysis.overall_impression}</p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
                 {[
-                  { label: 'Eye Contact', data: safeAnalysis.video_analysis.eye_contact, icon: Eye },
-                  { label: 'Confidence', data: safeAnalysis.video_analysis.confidence_level, icon: Star },
-                  { label: 'Body Language', data: safeAnalysis.video_analysis.body_language, icon: Target },
-                  { label: 'Presence', data: safeAnalysis.video_analysis.professional_presence, icon: Award },
-                  { label: 'Engagement', data: safeAnalysis.video_analysis.engagement, icon: Brain }
+                  { label: 'Eye Contact', data: report.video_analysis.eye_contact, icon: Eye },
+                  { label: 'Confidence', data: report.video_analysis.confidence_level, icon: Star },
+                  { label: 'Body Language', data: report.video_analysis.body_language, icon: Target },
+                  { label: 'Presence', data: report.video_analysis.professional_presence, icon: Award },
+                  { label: 'Engagement', data: report.video_analysis.engagement, icon: Brain }
                 ].map((item, idx) => (
                   <div key={idx} className="bg-muted rounded-lg p-4">
                     <div className="flex items-center gap-2 mb-2">
@@ -429,7 +618,7 @@ export default function InterviewReportPage() {
                     Visual Strengths
                   </h4>
                   <ul className="space-y-1">
-                    {safeAnalysis.video_analysis.strengths.map((s, i) => (
+                    {report.video_analysis.strengths.map((s, i) => (
                       <li key={i} className="text-muted-foreground text-sm ml-6">• {s}</li>
                     ))}
                   </ul>
@@ -441,7 +630,7 @@ export default function InterviewReportPage() {
                     Visual Recommendations
                   </h4>
                   <ul className="space-y-1">
-                    {safeAnalysis.video_analysis.recommendations.map((r, i) => (
+                    {report.video_analysis.recommendations.map((r, i) => (
                       <li key={i} className="text-muted-foreground text-sm ml-6">• {r}</li>
                     ))}
                   </ul>
@@ -461,22 +650,22 @@ export default function InterviewReportPage() {
               </div>
 
               <div className="mb-4">
-                <Progress value={safeAnalysis.technical_assessment.score} className="h-2" />
-                <div className="text-right text-muted-foreground text-sm mt-1">{safeAnalysis.technical_assessment.score}/100</div>
+                <Progress value={report.technical_assessment.score} className="h-2" />
+                <div className="text-right text-muted-foreground text-sm mt-1">{report.technical_assessment.score}/100</div>
               </div>
 
               <div className="space-y-3">
                 <div>
                   <div className="text-muted-foreground text-sm font-medium mb-1">Depth</div>
-                  <p className="text-sm">{safeAnalysis.technical_assessment.depth || 'Not assessed'}</p>
+                  <p className="text-sm">{report.technical_assessment.depth || 'Not assessed'}</p>
                 </div>
                 <div>
                   <div className="text-muted-foreground text-sm font-medium mb-1">Accuracy</div>
-                  <p className="text-sm">{safeAnalysis.technical_assessment.accuracy || 'Not assessed'}</p>
+                  <p className="text-sm">{report.technical_assessment.accuracy || 'Not assessed'}</p>
                 </div>
                 <div>
                   <div className="text-muted-foreground text-sm font-medium mb-1">Problem Solving</div>
-                  <p className="text-sm">{safeAnalysis.technical_assessment.problem_solving || 'Not assessed'}</p>
+                  <p className="text-sm">{report.technical_assessment.problem_solving || 'Not assessed'}</p>
                 </div>
               </div>
             </Card>
@@ -489,22 +678,22 @@ export default function InterviewReportPage() {
               </div>
 
               <div className="mb-4">
-                <Progress value={safeAnalysis.communication_assessment.score} className="h-2" />
-                <div className="text-right text-muted-foreground text-sm mt-1">{safeAnalysis.communication_assessment.score}/100</div>
+                <Progress value={report.communication_assessment.score} className="h-2" />
+                <div className="text-right text-muted-foreground text-sm mt-1">{report.communication_assessment.score}/100</div>
               </div>
 
               <div className="space-y-3">
                 <div>
                   <div className="text-muted-foreground text-sm font-medium mb-1">Clarity</div>
-                  <p className="text-sm">{safeAnalysis.communication_assessment.clarity || 'Not assessed'}</p>
+                  <p className="text-sm">{report.communication_assessment.clarity || 'Not assessed'}</p>
                 </div>
                 <div>
                   <div className="text-muted-foreground text-sm font-medium mb-1">Structure</div>
-                  <p className="text-sm">{safeAnalysis.communication_assessment.structure || 'Not assessed'}</p>
+                  <p className="text-sm">{report.communication_assessment.structure || 'Not assessed'}</p>
                 </div>
                 <div>
                   <div className="text-muted-foreground text-sm font-medium mb-1">Examples</div>
-                  <p className="text-sm">{safeAnalysis.communication_assessment.examples || 'Not assessed'}</p>
+                  <p className="text-sm">{report.communication_assessment.examples || 'Not assessed'}</p>
                 </div>
               </div>
             </Card>
@@ -517,29 +706,29 @@ export default function InterviewReportPage() {
               </div>
 
               <div className="mb-4">
-                <Progress value={safeAnalysis.soft_skills.score} className="h-2" />
-                <div className="text-right text-muted-foreground text-sm mt-1">{safeAnalysis.soft_skills.score}/100</div>
+                <Progress value={report.soft_skills.score} className="h-2" />
+                <div className="text-right text-muted-foreground text-sm mt-1">{report.soft_skills.score}/100</div>
               </div>
 
               <div className="space-y-3">
                 <div>
                   <div className="text-muted-foreground text-sm font-medium mb-1">Confidence</div>
-                  <p className="text-sm">{safeAnalysis.soft_skills.confidence || 'Not assessed'}</p>
+                  <p className="text-sm">{report.soft_skills.confidence || 'Not assessed'}</p>
                 </div>
                 <div>
                   <div className="text-muted-foreground text-sm font-medium mb-1">Engagement</div>
-                  <p className="text-sm">{safeAnalysis.soft_skills.engagement || 'Not assessed'}</p>
+                  <p className="text-sm">{report.soft_skills.engagement || 'Not assessed'}</p>
                 </div>
                 <div>
                   <div className="text-muted-foreground text-sm font-medium mb-1">Presence</div>
-                  <p className="text-sm">{safeAnalysis.soft_skills.presence || 'Not assessed'}</p>
+                  <p className="text-sm">{report.soft_skills.presence || 'Not assessed'}</p>
                 </div>
               </div>
             </Card>
           </div>
 
           {/* Question by Question (if available) */}
-          {safeAnalysis.question_by_question && safeAnalysis.question_by_question.length > 0 && (
+          {report.question_by_question && report.question_by_question.length > 0 && (
             <Card className="p-6 bg-card border-border mb-8">
               <div className="flex items-center gap-2 mb-6">
                 <Target className="h-5 w-5 text-blue-500" />
@@ -547,7 +736,7 @@ export default function InterviewReportPage() {
               </div>
 
               <div className="space-y-4">
-                {safeAnalysis.question_by_question.map((q, idx) => (
+                {report.question_by_question.map((q, idx) => (
                   <div key={idx} className="bg-muted rounded-lg p-4">
                     <div className="flex items-start justify-between mb-2">
                       <h4 className="font-medium">Question {idx + 1}: {q.question_summary}</h4>
@@ -570,8 +759,8 @@ export default function InterviewReportPage() {
             </div>
 
             <div className="space-y-4">
-              {safeAnalysis.improvement_roadmap && Array.isArray(safeAnalysis.improvement_roadmap) && safeAnalysis.improvement_roadmap.length > 0 ? (
-                safeAnalysis.improvement_roadmap.map((item, idx) => (
+              {report.improvement_roadmap && Array.isArray(report.improvement_roadmap) && report.improvement_roadmap.length > 0 ? (
+                report.improvement_roadmap.map((item, idx) => (
                   <div key={idx} className="bg-muted rounded-lg p-4 border border-border">
                     <div className="flex items-center gap-2 mb-3">
                       <Badge className={getPriorityColor(item.priority)}>
@@ -628,9 +817,9 @@ export default function InterviewReportPage() {
                 <h3 className="text-xl font-bold">Interview Tips</h3>
               </div>
 
-              {safeAnalysis.interview_tips.length > 0 ? (
+              {report.interview_tips.length > 0 ? (
                 <ul className="space-y-2">
-                  {safeAnalysis.interview_tips.map((tip, idx) => (
+                  {report.interview_tips.map((tip, idx) => (
                     <li key={idx} className="flex items-start gap-2 text-muted-foreground text-sm">
                       <Star className="h-4 w-4 text-yellow-500 mt-0.5 flex-shrink-0" />
                       <span>{tip}</span>
@@ -651,9 +840,9 @@ export default function InterviewReportPage() {
                 <h3 className="text-xl font-bold">Recommended Resources</h3>
               </div>
 
-              {safeAnalysis.recommended_resources.length > 0 ? (
+              {report.recommended_resources.length > 0 ? (
                 <ul className="space-y-2">
-                  {safeAnalysis.recommended_resources.map((resource, idx) => (
+                  {report.recommended_resources.map((resource, idx) => (
                     <li key={idx} className="flex items-start gap-2 text-muted-foreground text-sm">
                       <CheckCircle className="h-4 w-4 text-blue-500 mt-0.5 flex-shrink-0" />
                       <span>{resource}</span>
@@ -669,7 +858,7 @@ export default function InterviewReportPage() {
           </div>
 
           {/* Practice Questions */}
-          {safeAnalysis.practice_questions.length > 0 && (
+          {report.practice_questions.length > 0 && (
             <Card className="p-6 bg-card border-border mt-6">
               <div className="flex items-center gap-2 mb-4">
                 <Brain className="h-5 w-5 text-purple-500" />
@@ -677,7 +866,7 @@ export default function InterviewReportPage() {
               </div>
 
               <div className="space-y-3">
-                {safeAnalysis.practice_questions.map((question, idx) => (
+                {report.practice_questions.map((question, idx) => (
                   <div key={idx} className="bg-muted rounded-lg p-4">
                     <div className="flex items-start gap-3">
                       <Badge variant="outline" className="mt-0.5">{idx + 1}</Badge>

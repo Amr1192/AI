@@ -83,14 +83,15 @@ class RagController extends Controller
         }
     }
 
-    $topK = $request->input('limit', 10);
-    $result = $this->ragService->findMatchingJobs($user, $topK);
+    $topK = (int) $request->input('limit', 10);
+    $withExplanations = $request->boolean('explain', config('ai.rag_explanations', false));
+    $result = $this->ragService->findMatchingJobs($user, $topK, $withExplanations);
 
-    // Check if any jobs were found
     if (isset($result['error'])) {
         return response()->json([
             'message' => $result['error'],
-            'recommendations' => []
+            'recommendations' => [],
+            'threshold' => $result['threshold'] ?? null,
         ], 404);
     }
 
@@ -98,7 +99,8 @@ class RagController extends Controller
         'message' => 'AI-powered job recommendations generated successfully',
         'count' => count($result['jobs']),
         'profile_completion' => $validation['score'] . '%',
-        'recommendations' => $result['jobs']
+        'threshold' => $result['threshold_applied'] ?? null,
+        'recommendations' => $result['jobs'],
     ]);
 }
 
@@ -120,23 +122,51 @@ class RagController extends Controller
         // Check if user owns this job posting (if you have authorization logic)
         // $this->authorize('view', $job);
 
-        // Generate job embedding if not exists
         if (!$job->embedding) {
-            $this->jobEmbeddingService->generateEmbedding($job);
+            $generated = $this->jobEmbeddingService->generateEmbedding($job);
+            $job->refresh();
+            if (!$generated || !$job->embedding) {
+                return response()->json([
+                    'message' => 'Failed to generate job embedding. Check OPENAI_API_KEY and try again.',
+                    'candidates' => [],
+                ], 500);
+            }
         }
 
-        $topK = $request->input('limit', 10);
-        $result = $this->ragService->findMatchingCandidates($job, $topK);
+        $topK = (int) $request->input('limit', 10);
+        $withExplanations = $request->boolean('explain', config('ai.rag_explanations', false));
+        $result = $this->ragService->findMatchingCandidates($job, $topK, $withExplanations);
+        $candidates = $result['candidates'] ?? [];
+        $message = $result['message'] ?? $result['error'] ?? null;
+        $usedFallback = false;
+
+        if (empty($candidates)) {
+            $candidates = $this->ragService->findCandidatesFallback($job, $topK);
+            if (!empty($candidates)) {
+                $usedFallback = true;
+                $message = $message
+                    ? $message . ' Showing skill-based matches as a fallback.'
+                    : 'No vector matches found. Showing skill-based candidate matches.';
+            }
+        }
+
+        if (empty($candidates)) {
+            $message = $message ?: 'No matching candidates found. Ensure users have complete profiles and run profile embedding generation.';
+        } elseif (!$usedFallback) {
+            $message = $message ?: 'Candidate recommendations generated successfully via semantic search.';
+        }
 
         return response()->json([
-            'message' => 'AI-powered candidate recommendations generated successfully',
+            'message' => $message,
             'job' => [
                 'id' => $job->id,
                 'title' => $job->title,
-                'company' => $job->company->name
+                'company' => $job->company->name ?? 'Unknown company',
             ],
-            'count' => count($result['candidates']),
-            'candidates' => $result['candidates']
+            'count' => count($candidates),
+            'threshold' => $result['threshold_applied'] ?? null,
+            'used_fallback' => $usedFallback,
+            'candidates' => $candidates,
         ]);
     }
 
@@ -231,11 +261,13 @@ class RagController extends Controller
         //     return response()->json(['message' => 'Unauthorized'], 403);
         // }
 
-        $count = $this->profileEmbeddingService->generateAllEmbeddings();
+        $force = $request->boolean('force', false);
+        $count = $this->profileEmbeddingService->generateAllEmbeddings($force);
 
         return response()->json([
             'message' => "Successfully generated embeddings for {$count} profiles",
-            'count' => $count
+            'count' => $count,
+            'force' => $force,
         ]);
     }
 
@@ -292,12 +324,12 @@ class RagController extends Controller
                 'requirements' => $job->requirements,
                 'salary_from' => $job->salary_from,
                 'salary_to' => $job->salary_to,
-                'embedding' => json_decode($job->embedding, true)
+                'embedding' => $job->embedding,
             ];
         })->toArray();
 
-        // Find similar jobs
-        $similarJobs = $this->embeddingService->findSimilar($queryEmbedding, $jobsArray, $limit);
+        $threshold = (float) config('ai.rag_similarity_threshold', 0.65);
+        $similarJobs = $this->embeddingService->findSimilar($queryEmbedding, $jobsArray, $limit, $threshold);
 
         $results = array_map(function ($job) {
             return [

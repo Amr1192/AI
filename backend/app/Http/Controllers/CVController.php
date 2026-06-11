@@ -10,7 +10,7 @@ class CVController extends Controller
 {
     /**
      * POST /api/cv/generate
-     * Accepts basic profile data and returns a generated CV/text using Anthropic (Claude Haiku 4.5)
+     * Accepts basic profile data and returns a generated CV/text using Anthropic Claude
      * Falls back to OpenAI if Anthropic isn't configured or fails.
      */
     public function generate(Request $request)
@@ -56,25 +56,26 @@ PROMPT;
             // Prefer Anthropic if configured
             if (env('ANTHROPIC_API_KEY')) {
                 $anthropicKey = env('ANTHROPIC_API_KEY');
-                $anthropicModel = env('ANTHROPIC_MODEL', 'claude-haiku-4.5');
+                $anthropicModel = config('ai.anthropic_model', 'claude-3-5-haiku-20241022');
 
                 Log::info('Generating CV via Anthropic', ['model' => $anthropicModel]);
 
                 $resp = Http::withHeaders([
                     'x-api-key' => $anthropicKey,
-                    'Content-Type' => 'application/json'
-                ])->timeout(60)->post('https://api.anthropic.com/v1/complete', [
+                    'anthropic-version' => '2023-06-01',
+                    'Content-Type' => 'application/json',
+                ])->timeout(60)->post('https://api.anthropic.com/v1/messages', [
                     'model' => $anthropicModel,
-                    'prompt' => "Human: {$prompt}\n\nAssistant:",
-                    'max_tokens' => 1000,
-                    'temperature' => 0.2,
+                    'max_tokens' => 1500,
+                    'messages' => [
+                        ['role' => 'user', 'content' => $prompt],
+                    ],
                 ]);
 
                 Log::info('Anthropic response', ['status' => $resp->status()]);
 
                 if ($resp->successful()) {
-                    $j = $resp->json();
-                    $content = $j['completion'] ?? $j['response'] ?? $resp->body();
+                    $content = $resp->json('content.0.text');
                 } else {
                     Log::warning('Anthropic CV generation failed', ['status' => $resp->status(), 'body' => $resp->body()]);
                 }
@@ -88,7 +89,7 @@ PROMPT;
                 }
 
                 $openaiKey = env('OPENAI_API_KEY');
-                $openaiModel = env('OPENAI_MODEL', 'gpt-4o-mini');
+                $openaiModel = config('ai.chat_model', 'gpt-4o-mini');
 
                 Log::info('Generating CV via OpenAI', ['model' => $openaiModel]);
 

@@ -6,8 +6,6 @@ import { Save, X, Sparkles, Send, Bot, User, Loader2, Wand2, CheckCircle, Circle
 import { toast } from "sonner";
 import FormSection, { CVData as BuilderCVData } from "./components/FormSection";
 import ResumePreview from "./components/ResumePreview";
-import Link from "next/link";
-
 interface Message {
   role: "user" | "assistant";
   content: string;
@@ -563,17 +561,15 @@ const parseInputLocally = (input: string, existing: any) => {
 
   return (
     <div className="min-h-screen bg-background relative">
-      <header className="border-b border-border bg-card sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div className="border-b border-border bg-card sticky top-14 z-40">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-lg bg-accent/20 flex items-center justify-center">
-              <span className="text-accent text-xl">📄</span>
+            <div className="w-9 h-9 rounded-lg bg-accent/20 flex items-center justify-center">
+              <span className="text-accent text-lg" aria-hidden="true">📄</span>
             </div>
-            <Link href="/create-cv">
-              <h1 className="text-2xl font-bold text-foreground cursor-pointer hover:text-accent transition-colors">CV Builder</h1>
-            </Link>
+            <h1 className="text-xl font-bold text-foreground">CV Builder</h1>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <Button variant="outline" className="gap-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white border-0 hover:from-purple-600 hover:to-pink-600" onClick={startAIChat}>
               <Sparkles className="w-4 h-4" />
               Generate with AI
@@ -600,7 +596,7 @@ const parseInputLocally = (input: string, existing: any) => {
             </Button>
           </div>
         </div>
-      </header>
+      </div>
 
       <div className="relative">
         <div className="grid grid-cols-1 md:grid-cols-2 p-6 md:p-10 gap-8">

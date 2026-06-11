@@ -1,14 +1,22 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
-import { useRouter } from "next/navigation"
+import { useEffect, useState, Suspense } from "react"
+import { useRouter, useSearchParams } from "next/navigation"
+import Image from "next/image"
 import { Eye, EyeOff, Loader2 } from "lucide-react"
 import { authService } from '@/lib/authService';
 
-export default function AuthPage() {
+function AuthPageContent() {
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [mode, setMode] = useState<"login" | "signup">("login")
+
+  useEffect(() => {
+    if (searchParams.get("mode") === "signup") {
+      setMode("signup")
+    }
+  }, [searchParams])
   const [loading, setLoading] = useState(false)
   const [socialLoading, setSocialLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
@@ -134,31 +142,29 @@ export default function AuthPage() {
   }
 
   return (
-    <div className="relative flex h-auto min-h-screen w-full flex-col overflow-x-hidden bg-background dark:bg-background">
-      <div className="flex flex-1 justify-center">
-        <div className="flex flex-col md:flex-row w-full ">
-          <div className="w-full md:w-1/2 bg-primary/20 dark:bg-background flex flex-col justify-center items-center pl-0 pr-8 lg:pr-12 py-8 lg:py-12 text-center relative overflow-hidden">
-            <div
-              className="absolute top-0 left-0 w-full h-full opacity-10"
-              style={{
-                backgroundImage: "radial-gradient(#1193d4 1px, transparent 1px)",
-                backgroundSize: "20px 20px",
-              }}
+    <div className="relative flex min-h-screen w-full flex-col overflow-x-hidden bg-background">
+      <div className="flex flex-1">
+        <div className="flex w-full flex-col md:flex-row">
+          <div className="relative hidden min-h-[calc(100vh-4rem)] w-full overflow-hidden md:flex md:w-1/2">
+            <Image
+              src="/auth-career-hero.png"
+              alt="Team reviewing a professional resume together"
+              fill
+              className="object-cover"
+              priority
             />
-            <div className="relative z-10">
-              <svg className="w-16 h-16 text-primary mx-auto mb-4" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-12h2v4h-2zm0 6h2v2h-2z" />
-              </svg>
-              <h1 className="text-foreground dark:text-slate-50 tracking-tight text-4xl font-bold leading-tight">
+            <div className="absolute inset-0 bg-gradient-to-t from-primary/90 via-primary/40 to-primary/20" />
+            <div className="relative z-10 flex flex-col justify-end p-10 lg:p-14 text-white">
+              <h1 className="text-3xl font-bold leading-tight tracking-tight lg:text-4xl">
                 Your Career, Supercharged.
               </h1>
-              <p className="text-muted-foreground dark:text-slate-400 mt-4 text-lg">
+              <p className="mt-3 max-w-md text-lg text-white/85">
                 Build the future of your career with AI-powered tools and insights.
               </p>
             </div>
           </div>
 
-          <div className="w-full md:w-1/2 bg-background dark:bg-gray-900 flex flex-col justify-center items-center p-8 lg:p-16">
+          <div className="flex w-full flex-col items-center justify-center bg-background p-8 dark:bg-gray-900 md:w-1/2 lg:p-16">
             <div className="flex flex-col max-w-[480px] flex-1 w-full">
               <div className="flex px-4 py-3 mb-6">
                 <div className="flex h-12 flex-1 items-center justify-center rounded-lg bg-secondary dark:bg-gray-800 p-1">
@@ -370,5 +376,17 @@ export default function AuthPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function AuthPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    }>
+      <AuthPageContent />
+    </Suspense>
   )
 }

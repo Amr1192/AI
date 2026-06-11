@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import DashboardNav from "@/components/dashboard-nav"
 import { Button } from "@/components/ui/button"
 import { cvEnhanceService } from "@/lib/cv-enhance-service"
 
@@ -66,7 +65,6 @@ export default function EnhanceCVProPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <DashboardNav user={user} />
 
       <main className="max-w-6xl mx-auto px-4 py-12">
         <div className="bg-white rounded-lg shadow-md p-8">

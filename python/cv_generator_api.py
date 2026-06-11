@@ -30,6 +30,7 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 if not OPENAI_API_KEY:
     raise RuntimeError("Missing OPENAI_API_KEY environment variable. Set OPENAI_API_KEY in your shell or a local .env file.")
 client = OpenAI(api_key=OPENAI_API_KEY)
+CHAT_MODEL = os.environ.get("OPENAI_CHAT_MODEL", "gpt-4o-mini")
 
 class SmartCVGenerator:
     def __init__(self):
@@ -115,7 +116,7 @@ Return ONLY valid JSON. Start with {{ and end with }}.
 
         try:
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=CHAT_MODEL,
                 messages=[
                     {"role": "system", "content": "You are a CV data extraction expert. Extract ALL information accurately. Return ONLY valid JSON with complete data including IDs. No explanations, no markdown."},
                     {"role": "user", "content": extraction_prompt}
@@ -309,7 +310,7 @@ Return ONLY valid JSON with complete structure.
 
         try:
             response = client.chat.completions.create(
-                model="gpt-4o-mini",
+                model=CHAT_MODEL,
                 messages=[
                     {"role": "system", "content": "You are an expert CV writer. Return ONLY valid JSON."},
                     {"role": "user", "content": generate_prompt}

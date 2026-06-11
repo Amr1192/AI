@@ -11,6 +11,9 @@ deps = {
     'pypdf': 'PDF extraction fallback parser',
     'docx': 'DOCX/Word document support (python-docx)',
     'dotenv': 'Environment variable loading (python-dotenv)',
+    'fitz': 'PDF page rendering for OCR (pymupdf)',
+    'PIL': 'Image handling for OCR (pillow)',
+    'pytesseract': 'Local OCR when Tesseract is installed (optional)',
 }
 
 print("Checking dependencies for enhance_api.py...\n")

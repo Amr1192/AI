@@ -74,7 +74,7 @@ class RealtimeInterviewController extends Controller
     $questionSet = json_decode($interview->question_set ?? '[]', true);
     $questionText = $questionSet[$questionIndex] ?? 'Unknown Question';
 
-    $modelUsed = env('ANALYSIS_MODEL', 'gpt-5-mini');
+    $modelUsed = config('ai.analysis_model', 'gpt-5-mini');
     $analysisSource = 'ai';
     $feedback = null;
     $verification_hash = null;
@@ -306,7 +306,7 @@ private function buildChatPayload(string $model, array $messages, int $maxTokens
      */
     private function analyzeAnswer(string $question, string $answer): array
     {
-        $model = env('ANALYSIS_MODEL', 'gpt-5-mini');
+        $model = config('ai.analysis_model', 'gpt-5-mini');
 
         // Handle empty or very short answers
         if (strlen($answer) < 10) {

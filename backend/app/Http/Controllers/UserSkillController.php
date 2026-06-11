@@ -2,12 +2,16 @@
 
 namespace App\Http\Controllers;
 
+use App\Services\ProfileEmbeddingService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Auth;
 
 class UserSkillController extends Controller
 {
+    public function __construct(
+        protected ProfileEmbeddingService $profileEmbeddingService
+    ) {}
     /**
      * GET /api/users/{userId}/skills
      * Get all skills for a user
@@ -119,6 +123,8 @@ class UserSkillController extends Controller
             ];
         }
 
+        $this->profileEmbeddingService->refreshForUserId((int) $userId);
+
         return response()->json([
             'message' => 'Skills added successfully',
             'skills' => $addedSkills
@@ -157,6 +163,7 @@ class UserSkillController extends Controller
         DB::table('user_skills')->where('id', $id)->update($updateData);
 
         $updatedSkill = DB::table('user_skills')->find($id);
+        $this->profileEmbeddingService->refreshForUserId((int) $skill->user_id);
 
         return response()->json([
             'message' => 'Skill updated successfully',
@@ -184,6 +191,7 @@ class UserSkillController extends Controller
         }
 
         DB::table('user_skills')->where('id', $id)->delete();
+        $this->profileEmbeddingService->refreshForUserId((int) $skill->user_id);
 
         return response()->json([
             'message' => 'Skill deleted successfully'

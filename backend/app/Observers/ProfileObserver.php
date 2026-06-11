@@ -4,43 +4,33 @@ namespace App\Observers;
 
 use App\Models\Profile;
 use App\Services\ProfileEmbeddingService;
+use Illuminate\Support\Facades\Log;
 
 class ProfileObserver
 {
-    protected $profileEmbeddingService;
+    public function __construct(
+        protected ProfileEmbeddingService $profileEmbeddingService
+    ) {}
 
-    public function __construct(ProfileEmbeddingService $profileEmbeddingService)
-    {
-        $this->profileEmbeddingService = $profileEmbeddingService;
-    }
-
-    /**
-     * Handle the Profile "created" event.
-     */
     public function created(Profile $profile): void
     {
-        // Generate embedding asynchronously after profile creation
-        dispatch(function () use ($profile) {
-            $this->profileEmbeddingService->generateEmbedding($profile->user);
-        })->afterResponse();
+        $this->refreshEmbedding($profile);
     }
 
-    /**
-     * Handle the Profile "updated" event.
-     */
     public function updated(Profile $profile): void
     {
-        // Update embedding asynchronously when profile is updated
-        dispatch(function () use ($profile) {
-            $this->profileEmbeddingService->updateEmbedding($profile->user);
-        })->afterResponse();
+        $this->refreshEmbedding($profile);
     }
 
-    /**
-     * Handle the Profile "deleted" event.
-     */
-    public function deleted(Profile $profile): void
+    protected function refreshEmbedding(Profile $profile): void
     {
-        // Embedding will be deleted with the profile (no action needed)
+        try {
+            $profile->loadMissing('user');
+            if ($profile->user) {
+                $this->profileEmbeddingService->updateEmbedding($profile->user);
+            }
+        } catch (\Throwable $e) {
+            Log::warning("Profile embedding refresh failed for user {$profile->user_id}: {$e->getMessage()}");
+        }
     }
 }

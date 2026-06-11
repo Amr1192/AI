@@ -78,8 +78,10 @@ class JobEmbeddingService
     public function generateAllEmbeddings(): int
     {
         $jobs = Job::with('company')
-            ->whereNull('embedding')
-            ->orWhere('embedding_generated_at', '<', now()->subDays(30)) // Regenerate old embeddings
+            ->where(function ($query) {
+                $query->whereNull('embedding')
+                    ->orWhere('embedding_generated_at', '<', now()->subDays(30));
+            })
             ->get();
 
         $count = 0;

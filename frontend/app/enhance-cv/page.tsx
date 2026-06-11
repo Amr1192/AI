@@ -1,8 +1,7 @@
 "use client"
 
-import { useEffect, useRef, useState, useCallback } from "react"
+import { useEffect, useRef, useState, useCallback, useMemo } from "react"
 import { useRouter } from "next/navigation"
-import DashboardNav from "@/components/dashboard-nav"
 import { Button } from "@/components/ui/button"
 import { toast } from "sonner"
 import { Loader2, Save, Download, FileText, RefreshCw, Sparkles, CheckCircle, XCircle, Plus } from "lucide-react"
@@ -43,6 +42,10 @@ export default function EnhanceCVPage() {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [isDraftSaving, setIsDraftSaving] = useState(false)
   
+  // Missing-fields prompt before enhancement
+  const [showMissingFields, setShowMissingFields] = useState(false)
+  const [missingFieldValues, setMissingFieldValues] = useState<Record<string, string>>({})
+
   // NEW: Skill suggestions state
   const [skillSuggestions, setSkillSuggestions] = useState<SkillSuggestion[]>([])
   const [loadingSuggestions, setLoadingSuggestions] = useState(false)
@@ -65,6 +68,94 @@ export default function EnhanceCVPage() {
   const [fontFamily, setFontFamily] = useState<string>("Helvetica")
 
   const previewRef = useRef<HTMLDivElement>(null)
+
+  const formatEducationEntry = (item: any): string => {
+    if (item == null) return ""
+    if (typeof item === "object" && !Array.isArray(item)) {
+      const degree = item.degree || item.qualification || item.title || item.name || ""
+      const institution = item.institution || item.school || item.university || item.college || ""
+      const year = item.year || item.graduationYear || item.graduation || item.date || ""
+      const field = item.field || item.major || ""
+      let degreeText = String(degree).trim()
+      if (field && degreeText && !degreeText.toLowerCase().includes(String(field).toLowerCase())) {
+        degreeText = `${degreeText} in ${field}`
+      }
+      const parts = [degreeText, String(institution).trim()].filter(Boolean)
+      let line = parts.join(" - ")
+      if (year) line = line ? `${line}, ${year}` : String(year)
+      return line.trim()
+    }
+
+    const text = String(item).trim()
+    if (!text) return ""
+    if (text.startsWith("{") && /degree|institution|university/i.test(text)) {
+      try {
+        const parsed = JSON.parse(text.replace(/'/g, '"'))
+        if (parsed && typeof parsed === "object") return formatEducationEntry(parsed)
+      } catch {
+        try {
+          const degree = text.match(/['"]degree['"]\s*:\s*['"]([^'"]+)['"]/i)?.[1]
+          const institution = text.match(/['"]institution['"]\s*:\s*['"]([^'"]+)['"]/i)?.[1]
+          const year = text.match(/['"]year['"]\s*:\s*(\d{4})/i)?.[1]
+          if (degree || institution) {
+            return formatEducationEntry({ degree, institution, year })
+          }
+        } catch { /* fall through */ }
+      }
+    }
+    return text
+  }
+
+  const normalizeEducationList = (v: any): string[] => {
+    if (!v) return []
+    const items = Array.isArray(v) ? v : [v]
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const item of items) {
+      const line = formatEducationEntry(item)
+      if (!line) continue
+      const key = line.toLowerCase().replace(/[^a-z0-9]/g, "")
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push(line)
+    }
+    return out
+  }
+
+  const toLine = (item: any): string => {
+    if (item == null) return ""
+    if (typeof item === "string") return item
+    if (typeof item === "number") return String(item)
+    if (Array.isArray(item)) return item.map(toLine).join(", ")
+    if (typeof item === "object") {
+      if ("degree" in item || "institution" in item || "university" in item) {
+        return formatEducationEntry(item)
+      }
+      const preferred = (item as any).text || (item as any).bullet || (item as any).description || (item as any).title
+      if (preferred) return String(preferred)
+      try { return Object.values(item).map(toLine).join(" — ") } catch { return "" }
+    }
+    return String(item)
+  }
+
+  const toArray = (v: any): string[] => {
+    if (!v) return []
+    if (Array.isArray(v)) return v.map(toLine).filter(Boolean)
+    if (typeof v === 'string') return v.split(/\n|\u2022|\-/).map(s=>s.trim()).filter(Boolean)
+    if (typeof v === 'object') return Object.values(v).map(toLine).filter(Boolean)
+    return []
+  }
+
+  const mergeContactFields = (primary: any, fallback: any) => ({
+    ...fallback,
+    ...primary,
+    name: primary?.name || fallback?.name || "",
+    email: primary?.email || fallback?.email || "",
+    phone: primary?.phone || fallback?.phone || "",
+    address: primary?.address || fallback?.address || "",
+    linkedin: primary?.linkedin || fallback?.linkedin || "",
+    education: normalizeEducationList(primary?.education?.length ? primary.education : fallback?.education),
+  })
 
   const toggleSection = (key: string) => {
     setHiddenSections(prev => ({ ...prev, [key]: !prev[key] }))
@@ -145,31 +236,76 @@ export default function EnhanceCVPage() {
     }
   }, [cvText, API_URL])
 
-  // NEW: Add selected skills to CV
-  const addSelectedSkills = useCallback(() => {
-    if (selectedSkills.length === 0) {
-      toast.error("Please select skills to add")
-      return
+  const buildCvTextFromData = useCallback((data: any, contact?: any): string => {
+    const lines: string[] = []
+    const name = contact?.name || data?.name
+    if (name) lines.push(String(name))
+
+    const contactLine = [contact?.phone, contact?.email, contact?.address, contact?.linkedin]
+      .filter(Boolean)
+      .join(" | ")
+    if (contactLine) lines.push(contactLine)
+    if (lines.length) lines.push("")
+
+    if (data?.summary) {
+      lines.push("Professional Summary")
+      lines.push(String(data.summary))
+      lines.push("")
     }
-    
-    // Add to enhanced data if exists, otherwise to current skills
-    if (enhancedData) {
-      const currentSkills = enhancedData.skills || []
-      const newSkills = [...currentSkills]
-      
-      selectedSkills.forEach(skill => {
-        if (!currentSkills.includes(skill)) {
-          newSkills.push(skill)
+
+    const experiences = data?.experienceEntries || []
+    if (experiences.length > 0) {
+      lines.push("Work Experience")
+      for (const exp of experiences) {
+        const header = [exp.title, exp.company].filter(Boolean).join(" at ")
+        const meta = [exp.period, exp.location].filter(Boolean).join(" | ")
+        lines.push(meta ? `${header} | ${meta}` : header)
+        for (const bullet of exp.bullets || []) {
+          const t = toLine(bullet).trim()
+          if (t) lines.push(`- ${t}`)
         }
-      })
-      
-      setEnhancedData({ ...enhancedData, skills: newSkills })
+        lines.push("")
+      }
     }
-    
-    toast.success(`Added ${selectedSkills.length} skills to your CV`)
-    setSelectedSkills([])
-    setShowSuggestions(false)
-  }, [selectedSkills, enhancedData])
+
+    const skills = Array.isArray(data?.skills) ? data.skills.filter((s: string) => String(s).trim()) : []
+    if (skills.length > 0) {
+      lines.push("Skills")
+      lines.push(skills.join(", "))
+      lines.push("")
+    }
+
+    const education = normalizeEducationList(data?.education)
+    if (education.length > 0) {
+      lines.push("Education")
+      education.forEach((e) => lines.push(e))
+      lines.push("")
+    }
+
+    const languages = toArray(data?.languages)
+    if (languages.length > 0) {
+      lines.push("Languages")
+      languages.forEach((l) => lines.push(`- ${l}`))
+      lines.push("")
+    }
+
+    const certifications = toArray(data?.certifications)
+    if (certifications.length > 0) {
+      lines.push("Certifications")
+      certifications.forEach((c) => lines.push(`- ${c}`))
+      lines.push("")
+    }
+
+    return lines.join("\n").trim()
+  }, [])
+
+  const analyzableText = useMemo(() => {
+    if (enhancedData) {
+      const built = buildCvTextFromData(enhancedData, lastAnalysis)
+      if (built.trim()) return built
+    }
+    return cvText
+  }, [enhancedData, lastAnalysis, cvText, buildCvTextFromData])
 
   // Save draft to localStorage
   const saveDraft = useCallback(async () => {
@@ -198,47 +334,31 @@ export default function EnhanceCVPage() {
     }
   }, [cvText, lastAnalysis, strengths, improvements, atsScore, overallScore])
 
-  const loadDraft = useCallback(() => {
-    try {
-      const draft = localStorage.getItem('cvDraft')
-      if (draft) {
-        const parsed = JSON.parse(draft)
-        setCVText(parsed.cvText || '')
-        if (parsed.analysis) {
-          setStrengths(parsed.analysis.strengths || [])
-          setImprovements(parsed.analysis.improvements || [])
-          setAtsScore(parsed.analysis.atsScore || null)
-          setOverallScore(parsed.analysis.overallScore || null)
-        }
-        toast.success('Draft loaded successfully')
-        return true
-      }
-    } catch (error) {
-      console.error('Failed to load draft:', error)
-    }
-    return false
+  const clearEnhanceStorage = useCallback(() => {
+    localStorage.removeItem('cv_from_analysis')
+    localStorage.removeItem('cv_auto_enhance')
+    localStorage.removeItem('cv_enhance_intent')
+    localStorage.removeItem('cv_file_name')
+    localStorage.removeItem('cv_file_type')
+    localStorage.removeItem('cvDraft')
   }, [])
 
-  const toLine = (item: any): string => {
-    if (item == null) return ""
-    if (typeof item === "string") return item
-    if (typeof item === "number") return String(item)
-    if (Array.isArray(item)) return item.map(toLine).join(", ")
-    if (typeof item === "object") {
-      const preferred = (item as any).text || (item as any).bullet || (item as any).description || (item as any).title
-      if (preferred) return String(preferred)
-      try { return Object.values(item).map(toLine).join(" — ") } catch { return "" }
-    }
-    return String(item)
-  }
-
-  const toArray = (v: any): string[] => {
-    if (!v) return []
-    if (Array.isArray(v)) return v.map(toLine).filter(Boolean)
-    if (typeof v === 'string') return v.split(/\n|\u2022|\-/).map(s=>s.trim()).filter(Boolean)
-    if (typeof v === 'object') return Object.values(v).map(toLine).filter(Boolean)
-    return []
-  }
+  const resetEnhanceState = useCallback(() => {
+    setCVText('')
+    setStrengths([])
+    setImprovements([])
+    setAtsScore(null)
+    setOverallScore(null)
+    setEnhancedCV('')
+    setEnhancedData(null)
+    setLastAnalysis(null)
+    setCustomSections([])
+    setHiddenSections({})
+    setSkillSuggestions([])
+    setSelectedSkills([])
+    setShowSuggestions(false)
+    setHasUnsavedChanges(false)
+  }, [])
 
   const toArrayWithEmpty = (v: any): string[] => {
   if (!v) return []
@@ -400,10 +520,37 @@ export default function EnhanceCVPage() {
     
     const email = text.match(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/)
     if (email) res.email = email[0]
-    const phone = text.match(/(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}/)
-    if (phone) res.phone = phone[0]
-    const address = text.match(/(?:\d+\s+[A-Za-z\s,]+\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr)\s*,?\s*[A-Za-z\s,]+(?:\d{5})?)/)
-    if (address) res.address = address[0]
+    const phone = text.match(/(?:\+?\d{1,4}[-.\s]?)?(?:\(?\d{2,4}\)?[-.\s]?)?\d{3,4}[-.\s]?\d{3,4}(?:[-.\s]?\d+)?/)
+    if (phone) res.phone = phone[0].trim()
+
+    const linkedin = text.match(/(?:https?:\/\/)?(?:www\.)?linkedin\.com\/(?:in|pub)\/[\w\-./%]+/i)
+      || text.match(/\blinkedin\.com\/[\w\-./%]+/i)
+    if (linkedin) {
+      let url = linkedin[0].trim().replace(/[.,;]+$/, "")
+      if (!/^https?:\/\//i.test(url)) url = `https://${url.replace(/^\/+/, "")}`
+      res.linkedin = url
+    }
+
+    const labeledAddress = text.match(/(?:address|location|based in|residence)\s*[:\-–]\s*([^\n|]+)/i)
+    if (labeledAddress) {
+      res.address = labeledAddress[1].trim().replace(/[.,;]+$/, "")
+    } else {
+      const cityCountry = text.match(
+        /\b([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\s*[,|\-–]\s*(Egypt|UAE|Saudi Arabia|KSA|USA|UK|United Kingdom|Canada|Jordan)\b/
+      )
+      if (cityCountry) {
+        res.address = cityCountry[0].trim().replace(/[.,;]+$/, "")
+      } else {
+        for (const l of lines.slice(0, 15)) {
+          const low = l.toLowerCase()
+          if (/@|linkedin|http/.test(low) || /\b(phone|email|mobile|tel)\b/.test(low)) continue
+          if (/(cairo|giza|alexandria|egypt|riyadh|dubai|uae|london|amman)/i.test(l) && l.length < 100) {
+            res.address = l.replace(/[.,;]+$/, "")
+            break
+          }
+        }
+      }
+    }
     
     const eduKeywords = ['Bachelor', 'Master', 'PhD', 'Doctor', 'Bachelor\'s', 'Master\'s', 'BSc', 'MSc', 'MBA', 'BS', 'MS']
     for (const l of lines) {
@@ -430,10 +577,14 @@ export default function EnhanceCVPage() {
     return res
   }
 
-  const analyzeWithText = useCallback(async (text: string) => {
+  const analyzeWithText = useCallback(async (
+    text: string,
+    structuredData?: Record<string, unknown>,
+    altText?: string,
+  ) => {
     if (!text.trim()) {
       toast.error("Please paste your CV text")
-      return
+      return null
     }
 
     setAnalyzing(true)
@@ -441,88 +592,405 @@ export default function EnhanceCVPage() {
       const res = await fetch(`${API_URL}/analyze`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cv_text: text })
+        body: JSON.stringify({
+          cv_text: text,
+          ...(structuredData ? { structured_data: structuredData } : {}),
+          ...(altText && altText.trim() && altText !== text ? { alt_text: altText } : {}),
+        })
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.error || "Analyze failed")
       let r = data.result || {}
       const local = deriveFromText(text)
-      r = { ...local, ...r }
+      r = mergeContactFields(r, local)
+      r.education = normalizeEducationList(r.education)
       setLastAnalysis(r)
+      setEnhancedData((prev: any) => {
+        const base = prev || {}
+        return {
+          ...base,
+          phone: r.phone || base.phone || "",
+          email: r.email || base.email || "",
+          address: r.address || base.address || "",
+          linkedin: r.linkedin || base.linkedin || "",
+          summary: base.summary || r.summary || "",
+          skills: base.skills?.length ? base.skills : (r.skills || []),
+          experienceEntries: base.experienceEntries?.length
+            ? base.experienceEntries
+            : (r.experienceEntries || []),
+          education: normalizeEducationList(base.education?.length ? base.education : r.education),
+          languages: base.languages?.length ? base.languages : (r.languages || []),
+          certifications: base.certifications?.length ? base.certifications : (r.certifications || []),
+        }
+      })
       setStrengths(Array.isArray(r.strengths) ? r.strengths : [])
       setImprovements(Array.isArray(r.improvements) ? r.improvements : [])
       setAtsScore(typeof r.atsScore === "number" ? r.atsScore : null)
       setOverallScore(typeof r.overallScore === "number" ? r.overallScore : null)
+      // The server may have merged content from both text versions; adopt its
+      // canonical text so every later analyze/enhance scores the same content.
+      if (typeof r.sourceText === "string" && r.sourceText.trim() && r.sourceText !== text) {
+        setCVText(r.sourceText)
+        setEnhancedCV(r.sourceText)
+      }
+      if (r.isValidCV === false) {
+        toast.error(r.whyThisScore || "This document is not a valid resume — ATS score is 0.")
+      }
+      return r
     } catch (e: any) {
       toast.error(e.message || "Analyze request failed")
+      return null
     } finally {
       setAnalyzing(false)
     }
   }, [API_URL])
 
+  const addSelectedSkills = useCallback(async () => {
+    if (selectedSkills.length === 0) {
+      toast.error("Please select skills to add")
+      return
+    }
+
+    const count = selectedSkills.length
+    const base = enhancedData || {
+      summary: lastAnalysis?.summary || "",
+      skills: Array.isArray(lastAnalysis?.skills) ? [...lastAnalysis.skills] : [],
+      experienceEntries: lastAnalysis?.experienceEntries || deriveFromText(cvText).experienceEntries || [],
+      education: lastAnalysis?.education || [],
+      languages: lastAnalysis?.languages || [],
+      certifications: lastAnalysis?.certifications || [],
+    }
+
+    const currentSkills: string[] = Array.isArray(base.skills) ? [...base.skills] : []
+    selectedSkills.forEach((skill) => {
+      if (!currentSkills.some((s) => s.toLowerCase() === skill.toLowerCase())) {
+        currentSkills.push(skill)
+      }
+    })
+
+    const updated = { ...base, skills: currentSkills }
+    setEnhancedData(updated)
+
+    const built = buildCvTextFromData(updated, lastAnalysis)
+    setCVText(built)
+    setEnhancedCV(built)
+    setSelectedSkills([])
+    setShowSuggestions(false)
+
+    const prevAts = atsScore
+    const result = await analyzeWithText(built, updated)
+    if (result && prevAts !== null && typeof result.atsScore === "number" && result.atsScore > prevAts) {
+      toast.success(`Added ${count} skills — ATS score: ${prevAts} → ${result.atsScore}`)
+    } else {
+      toast.success(`Added ${count} skills and re-analyzed your CV`)
+    }
+  }, [selectedSkills, enhancedData, lastAnalysis, cvText, buildCvTextFromData, atsScore, analyzeWithText])
+
   const handleAnalyze = useCallback(async () => {
-    await analyzeWithText(cvText)
-  }, [cvText, analyzeWithText])
+    // Raw text is the source of truth; the structure rebuild is sent as an
+    // alternate version so the server can merge anything only one of them has.
+    const alt = enhancedData ? buildCvTextFromData(enhancedData, lastAnalysis) : undefined
+    const prevAts = atsScore
+    const result = await analyzeWithText(cvText, enhancedData || undefined, alt)
+    if (result && prevAts !== null && typeof result.atsScore === "number" && result.atsScore !== prevAts) {
+      toast.success(`ATS score updated: ${prevAts} → ${result.atsScore}`)
+    }
+  }, [cvText, enhancedData, lastAnalysis, buildCvTextFromData, atsScore, analyzeWithText])
+
+  type MissingFieldDef = {
+    key: string
+    label: string
+    kind: "text" | "textarea" | "list" | "experience"
+    placeholder: string
+    aliases?: string[]
+  }
+
+  const MISSING_FIELD_DEFS: MissingFieldDef[] = [
+    { key: "name", label: "Full Name", kind: "text", placeholder: "John Doe" },
+    { key: "email", label: "Email", kind: "text", placeholder: "you@example.com" },
+    { key: "phone", label: "Phone", kind: "text", placeholder: "+20 100 123 4567" },
+    { key: "address", label: "Address / Location", kind: "text", placeholder: "Cairo, Egypt" },
+    { key: "linkedin", label: "LinkedIn URL", kind: "text", placeholder: "linkedin.com/in/your-name" },
+    {
+      key: "summary", label: "Professional Summary", kind: "textarea",
+      placeholder: "3-5 sentences about your experience, strengths, and goals",
+      aliases: ["professional summary", "summary", "profile", "objective", "about me", "about"],
+    },
+    {
+      key: "experience", label: "Work Experience", kind: "experience",
+      placeholder: "One role per line:\nLawyer at Smith & Co | Jan 2019 - Dec 2022\nLegal Intern at Firm LLP | 2018 - 2019",
+      aliases: ["work experience", "professional experience", "experience", "employment history", "employment", "work history"],
+    },
+    {
+      key: "skills", label: "Skills", kind: "list",
+      placeholder: "Communication, Leadership, Legal research (comma or new line separated)",
+      aliases: ["skills", "technical skills", "core competencies", "key skills"],
+    },
+    {
+      key: "education", label: "Education", kind: "list",
+      placeholder: "Bachelor Degree in Law - Cairo University, 2018",
+      aliases: ["education", "academic background", "academic qualifications", "qualifications"],
+    },
+    {
+      key: "languages", label: "Languages", kind: "list",
+      placeholder: "Arabic: Native, English: Advanced",
+      aliases: ["languages", "language skills"],
+    },
+    {
+      key: "certifications", label: "Certifications", kind: "list",
+      placeholder: "AWS Certified Developer - 2023 (one per line)",
+      aliases: ["certifications", "certificates", "licenses", "courses", "training"],
+    },
+  ]
+
+  const getContactValue = (key: string): string => {
+    const v = (enhancedData as any)?.[key] || (lastAnalysis as any)?.[key] || ""
+    return String(v).trim()
+  }
+
+  const sectionPresentInText = (aliases: string[]): boolean => {
+    return cvText.split(/\r?\n/).some((l) => {
+      const s = l.trim().replace(/:$/, "").trim().toLowerCase()
+      return s.length <= 40 && aliases.includes(s)
+    })
+  }
+
+  const getMissingFields = (): MissingFieldDef[] => {
+    const missing: MissingFieldDef[] = []
+    for (const def of MISSING_FIELD_DEFS) {
+      if (def.kind === "text") {
+        if (!getContactValue(def.key)) missing.push(def)
+        continue
+      }
+      if (def.key === "summary") {
+        const summary = String(enhancedData?.summary || lastAnalysis?.summary || "").trim()
+        if (summary.split(/\s+/).filter(Boolean).length < 10 && !sectionPresentInText(def.aliases!)) {
+          missing.push(def)
+        }
+        continue
+      }
+      if (def.key === "experience") {
+        const entries = enhancedData?.experienceEntries?.length
+          ? enhancedData.experienceEntries
+          : lastAnalysis?.experienceEntries
+        if (!(entries?.length > 0) && !sectionPresentInText(def.aliases!)) {
+          missing.push(def)
+        }
+        continue
+      }
+      // list sections: skills, education, languages, certifications
+      const fromData = (enhancedData as any)?.[def.key]?.length
+        ? (enhancedData as any)[def.key]
+        : (lastAnalysis as any)?.[def.key]
+      if (!(toArray(fromData).length > 0) && !sectionPresentInText(def.aliases!)) {
+        missing.push(def)
+      }
+    }
+    return missing
+  }
+
+  const parseExperienceLines = (raw: string) => {
+    return raw
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const m = line.match(/^(.+?)\s+at\s+(.+?)(?:\s*\|\s*(.+))?$/i)
+        if (m) {
+          return { title: m[1].trim(), company: m[2].trim(), period: (m[3] || "").trim(), location: "", bullets: [] }
+        }
+        return { title: line, company: "", period: "", location: "", bullets: [] }
+      })
+  }
+
+  const mergeFilled = (base: any, filled: Record<string, any>) => {
+    const out = { ...(base || {}) }
+    for (const [k, v] of Object.entries(filled)) {
+      if (Array.isArray(v)) {
+        out[k] = [...(Array.isArray(out[k]) ? out[k] : []), ...v]
+      } else {
+        out[k] = v
+      }
+    }
+    return out
+  }
+
+  const injectMissingIntoText = (text: string, extra: Record<string, any>): string => {
+    const labels: Record<string, string> = {
+      email: "Email", phone: "Phone", address: "Address", linkedin: "LinkedIn",
+    }
+    const contactAdditions = ["email", "phone", "address", "linkedin"]
+      .filter((k) => typeof extra[k] === "string" && extra[k].trim())
+      .map((k) => `${labels[k]}: ${String(extra[k]).trim()}`)
+
+    const lines = text.split(/\r?\n/)
+    const firstContentIdx = lines.findIndex((l) => l.trim())
+    let out = [...lines]
+    if (contactAdditions.length > 0) {
+      out.splice(Math.max(firstContentIdx, 0) + 1, 0, ...contactAdditions)
+    }
+    const name = typeof extra.name === "string" ? extra.name.trim() : ""
+    if (name && firstContentIdx >= 0 && !lines[firstContentIdx].toLowerCase().includes(name.toLowerCase())) {
+      out.unshift(name)
+    }
+
+    const sections: string[] = []
+    if (typeof extra.summary === "string" && extra.summary.trim()) {
+      sections.push(`Professional Summary\n${extra.summary.trim()}`)
+    }
+    if (Array.isArray(extra.experienceEntries) && extra.experienceEntries.length > 0) {
+      const expLines = extra.experienceEntries.map((e: any) => {
+        const header = e.title && e.company ? `${e.title} at ${e.company}` : (e.title || e.company)
+        return e.period ? `${header} | ${e.period}` : header
+      })
+      sections.push(`Work Experience\n${expLines.join("\n")}`)
+    }
+    if (Array.isArray(extra.skills) && extra.skills.length > 0) {
+      sections.push(`Skills\n${extra.skills.join(", ")}`)
+    }
+    if (Array.isArray(extra.education) && extra.education.length > 0) {
+      sections.push(`Education\n${extra.education.join("\n")}`)
+    }
+    if (Array.isArray(extra.languages) && extra.languages.length > 0) {
+      sections.push(`Languages\n${extra.languages.map((l: string) => `- ${l}`).join("\n")}`)
+    }
+    if (Array.isArray(extra.certifications) && extra.certifications.length > 0) {
+      sections.push(`Certifications\n${extra.certifications.map((c: string) => `- ${c}`).join("\n")}`)
+    }
+
+    let result = out.join("\n")
+    if (sections.length > 0) {
+      result = result.trimEnd() + "\n\n" + sections.join("\n\n")
+    }
+    return result
+  }
 
   const handleEnhance = async () => {
-    if (!cvText.trim()) {
+    if (!analyzableText.trim()) {
       toast.error("Please paste your CV text")
       return
     }
-    if (!lastAnalysis) {
-      await analyzeWithText(cvText)
+    const missing = getMissingFields()
+    if (missing.length > 0) {
+      setMissingFieldValues(Object.fromEntries(missing.map((f) => [f.key, ""])))
+      setShowMissingFields(true)
+      return
+    }
+    await runEnhance({})
+  }
+
+  const submitMissingFields = async (skip: boolean) => {
+    setShowMissingFields(false)
+    const filled: Record<string, any> = {}
+    if (!skip) {
+      for (const def of MISSING_FIELD_DEFS) {
+        const raw = missingFieldValues[def.key]
+        if (!raw || !raw.trim()) continue
+        if (def.kind === "text" || def.kind === "textarea") {
+          filled[def.key] = raw.trim()
+        } else if (def.kind === "list") {
+          filled[def.key] = raw.split(/\r?\n|,|;/).map((s) => s.trim()).filter(Boolean)
+        } else if (def.kind === "experience") {
+          filled.experienceEntries = parseExperienceLines(raw)
+        }
+      }
+    }
+    if (Object.keys(filled).length > 0) {
+      setLastAnalysis((prev: any) => mergeFilled(prev, filled))
+      setEnhancedData((prev: any) => (prev ? mergeFilled(prev, filled) : prev))
+    }
+    await runEnhance(filled)
+  }
+
+  const runEnhance = async (extra: Record<string, any>) => {
+    // Send the full current content (textarea + preview edits + newly filled
+    // fields), so nothing the user added is lost during enhancement.
+    const contactExtra: Record<string, string> = {}
+    for (const k of ["name", "email", "phone", "address", "linkedin"]) {
+      if (typeof extra[k] === "string" && extra[k].trim()) contactExtra[k] = extra[k].trim()
+    }
+
+    // Raw text (plus newly filled fields) is always the primary source; the
+    // structure rebuild goes along as alt_text so the server can union them.
+    const sourceText = injectMissingIntoText(cvText, extra)
+    let altText: string | undefined
+    if (enhancedData) {
+      const mergedContact = {
+        ...deriveFromText(cvText),
+        ...lastAnalysis,
+        ...contactExtra,
+      }
+      altText = buildCvTextFromData(mergeFilled(enhancedData, extra), mergedContact)
+    }
+    if (!sourceText.trim()) {
+      toast.error("Please paste your CV text")
+      return
+    }
+    let baseline = lastAnalysis ? mergeFilled(lastAnalysis, extra) : null
+    if (!baseline) {
+      baseline = await analyzeWithText(sourceText)
+      if (!baseline) return
+      baseline = mergeFilled(baseline, extra)
     }
     setEnhancing(true)
     try {
       const res = await fetch(`${API_URL}/enhance`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cv_text: cvText, tone: "professional" })
+        body: JSON.stringify({
+          cv_text: sourceText,
+          tone: "professional",
+          baseline,
+          ...(altText && altText.trim() && altText !== sourceText ? { alt_text: altText } : {}),
+        })
       })
       const data = await res.json()
       if (!data.success) throw new Error(data.error || "Enhance failed")
-      const ecv = data.enhanced || {}
-      const experienceEntries = ecv?.experienceEntries || []
-      
-      const local = deriveFromText(cvText)
-      const finalExperienceEntries = experienceEntries.length > 0 ? experienceEntries : local.experienceEntries || []
-      
-      setEnhancedData({ 
-        ...ecv, 
-        experienceEntries: finalExperienceEntries,
-        languages: ecv.languages || local.languages || []
+
+      const merged = {
+        ...(data.enhanced || {}),
+        education: normalizeEducationList(data.enhanced?.education),
+      }
+      const local = deriveFromText(sourceText)
+      const contact = mergeContactFields(merged, mergeContactFields(baseline, local))
+      const fullText = data.enhancedText || data.builtText || buildCvTextFromData(merged, contact)
+
+      setEnhancedData({
+        ...merged,
+        phone: contact.phone,
+        email: contact.email,
+        address: contact.address,
+        linkedin: contact.linkedin,
       })
-      const lines: string[] = []
-      if (ecv.summary) lines.push(ecv.summary, "")
-      const itemToString = (item: any): string => {
-        if (item == null) return ""
-        if (typeof item === "string") return item
-        if (typeof item === "number") return String(item)
-        if (Array.isArray(item)) return item.map(itemToString).join(", ")
-        if (typeof item === "object") {
-          const preferred = item.text || item.bullet || item.description || item.title
-          if (preferred) return String(preferred)
-          try { return Object.values(item).map(itemToString).join(" — ") } catch { return "" }
+      setCVText(fullText)
+      setEnhancedCV(fullText)
+
+      const newScore = typeof data.atsScore === "number" ? data.atsScore : null
+      const baselineScore = typeof data.previousAtsScore === "number"
+        ? data.previousAtsScore
+        : (typeof atsScore === "number" ? atsScore : null)
+
+      setLastAnalysis({ ...baseline, ...merged, atsScore: newScore, overallScore: newScore })
+      setAtsScore(newScore)
+      setOverallScore(newScore)
+      if (Array.isArray(merged.improvements)) {
+        setImprovements(merged.improvements)
+      }
+      if (Array.isArray(merged.strengths)) {
+        setStrengths(merged.strengths)
+      }
+
+      if (newScore !== null) {
+        if (baselineScore !== null && newScore > baselineScore) {
+          toast.success(`CV enhanced — ATS score improved: ${baselineScore} → ${newScore}`)
+        } else if (baselineScore !== null && newScore === baselineScore) {
+          toast.success(`CV enhanced — ATS score: ${newScore}/100 (structure improved, same rubric score)`)
+        } else {
+          toast.success(`CV enhanced — ATS score: ${newScore}/100`)
         }
-        return String(item)
+      } else {
+        toast.success("CV enhanced successfully")
       }
-      if (Array.isArray(ecv.experience)) {
-        lines.push("Experience:")
-        ecv.experience.forEach((b: any) => {
-          const t = itemToString(b).trim()
-          if (t) lines.push(`• ${t}`)
-        })
-        lines.push("")
-      }
-      if (Array.isArray(ecv.skills)) {
-        lines.push("Skills:")
-        ecv.skills.forEach((s: any) => {
-          const t = itemToString(s).trim()
-          if (t) lines.push(`- ${t}`)
-        })
-        lines.push("")
-      }
-      setEnhancedCV(lines.join("\n"))
     } catch (e: any) {
       toast.error(e.message || "Enhance request failed")
     } finally {
@@ -684,16 +1152,20 @@ export default function EnhanceCVPage() {
   useEffect(() => {
     if (!loading && user) {
       try {
+        const enhanceIntent = localStorage.getItem('cv_enhance_intent')
         const fromAnalysis = localStorage.getItem('cv_from_analysis')
         const autoEnhance = localStorage.getItem('cv_auto_enhance')
-        
-        if (fromAnalysis && fromAnalysis.trim()) {
-          setCVText(fromAnalysis)
+
+        // Only preload CV when user analyzed then clicked "Enhance CV" on analysis page
+        if (enhanceIntent === 'true' && fromAnalysis?.trim()) {
+          localStorage.removeItem('cv_enhance_intent')
           localStorage.removeItem('cv_from_analysis')
           localStorage.removeItem('cv_auto_enhance')
           localStorage.removeItem('cv_file_name')
           localStorage.removeItem('cv_file_type')
-          
+
+          setCVText(fromAnalysis)
+
           if (autoEnhance === 'true') {
             setTimeout(async () => {
               await analyzeWithText(fromAnalysis)
@@ -703,24 +1175,21 @@ export default function EnhanceCVPage() {
               }, 500)
             }, 100)
           } else {
-            setTimeout(() => {
-              analyzeWithText(fromAnalysis)
-            }, 100)
+            setTimeout(() => analyzeWithText(fromAnalysis), 100)
           }
-          
+
           setHasUnsavedChanges(true)
           return
         }
       } catch (error) {
-        console.error('Failed to load cv_from_analysis:', error)
+        console.error('Failed to load CV from analysis flow:', error)
       }
-      
-      const hasDraft = loadDraft()
-      if (hasDraft) {
-        setHasUnsavedChanges(true)
-      }
+
+      // Fresh start for direct navigation or navbar visits
+      clearEnhanceStorage()
+      resetEnhanceState()
     }
-  }, [loading, user, loadDraft, analyzeWithText])
+  }, [loading, user, clearEnhanceStorage, resetEnhanceState, analyzeWithText])
 
   useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -752,13 +1221,73 @@ export default function EnhanceCVPage() {
 
   return (
     <div className="min-h-screen bg-background">
-      <DashboardNav user={user as any} />
+
+      {showMissingFields && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-lg bg-white shadow-xl">
+            <div className="border-b px-6 py-4">
+              <h2 className="text-lg font-semibold text-primary">Complete your CV for ATS</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                These sections are missing or empty in your CV. ATS systems score them,
+                so filling them will genuinely raise your score — we never invent your data.
+                Anything left blank will simply be skipped.
+              </p>
+            </div>
+            <div className="flex-1 space-y-4 overflow-y-auto px-6 py-4">
+              {MISSING_FIELD_DEFS.filter((f) => f.key in missingFieldValues).map((f) => (
+                <div key={f.key}>
+                  <label className="mb-1 block text-sm font-medium">{f.label}</label>
+                  {f.kind === "text" ? (
+                    <input
+                      className="w-full rounded border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+                      placeholder={f.placeholder}
+                      value={missingFieldValues[f.key] ?? ''}
+                      onChange={(e) =>
+                        setMissingFieldValues((prev) => ({ ...prev, [f.key]: e.target.value }))
+                      }
+                    />
+                  ) : (
+                    <textarea
+                      className="w-full rounded border px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-accent"
+                      placeholder={f.placeholder}
+                      rows={f.kind === "textarea" || f.kind === "experience" ? 4 : 2}
+                      value={missingFieldValues[f.key] ?? ''}
+                      onChange={(e) =>
+                        setMissingFieldValues((prev) => ({ ...prev, [f.key]: e.target.value }))
+                      }
+                    />
+                  )}
+                  {f.kind === "list" && (
+                    <p className="mt-1 text-xs text-muted-foreground">Separate items with commas or new lines.</p>
+                  )}
+                  {f.kind === "experience" && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      One role per line: Job Title at Company | Period
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 border-t px-6 py-4">
+              <Button variant="ghost" onClick={() => setShowMissingFields(false)}>
+                Cancel
+              </Button>
+              <Button variant="secondary" onClick={() => submitMissingFields(true)}>
+                Skip & Enhance
+              </Button>
+              <Button className="bg-accent hover:bg-accent/90" onClick={() => submitMissingFields(false)}>
+                Save & Enhance
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-6xl mx-auto px-4 py-12">
         <div className="bg-white rounded-lg shadow-md p-8">
           <h1 className="text-3xl font-bold text-primary mb-2">Enhance Your CV - ATS Optimized</h1>
           <p className="text-muted-foreground mb-8">
-            Get AI-powered suggestions and 100% ATS-compatible formatting
+            Honest ATS analysis and improvement based on your actual CV content
           </p>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -792,7 +1321,11 @@ export default function EnhanceCVPage() {
                       const text = data.text || ""
                       setCVText(text)
                       if (text) {
-                        toast.success("CV text extracted successfully")
+                        toast.success(
+                          data.ocr_used
+                            ? "Scanned PDF read successfully (OCR)"
+                            : "CV text extracted successfully"
+                        )
                         await analyzeWithText(text)
                       } else {
                         toast.error("No text was extracted from the file. Please paste your CV text manually.")
@@ -806,7 +1339,12 @@ export default function EnhanceCVPage() {
                   }}
                   className="block text-sm"
                 />
-                {uploadingFile && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                {uploadingFile && (
+                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Extracting text…
+                  </span>
+                )}
                 <span className="text-xs text-muted-foreground">PDF/DOCX/TXT</span>
               </div>
               <textarea
@@ -818,7 +1356,7 @@ export default function EnhanceCVPage() {
               <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                 <Button 
                   onClick={handleAnalyze} 
-                  disabled={analyzing || !cvText.trim()} 
+                  disabled={analyzing || !analyzableText.trim()} 
                   className="w-full bg-accent hover:bg-accent/90"
                 >
                   {analyzing ? (
@@ -897,7 +1435,7 @@ export default function EnhanceCVPage() {
             <div className="space-y-4">
               <h2 className="text-xl font-semibold text-primary">AI Suggestions</h2>
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 space-y-5 h-96 overflow-y-auto">
-                {!cvText.trim() && (
+                {!analyzableText.trim() && (
                   <div className="h-full flex items-center justify-center text-center p-4">
                     <div>
                       <p className="text-muted-foreground mb-4">No CV content to analyze yet.</p>
@@ -923,13 +1461,23 @@ export default function EnhanceCVPage() {
                         ))}
                       </ul>
                     </div>
-                    <div className="flex gap-4 text-sm text-blue-900">
-                      {atsScore !== null && (
-                        <span className={`font-semibold ${atsScore >= 80 ? 'text-green-700' : atsScore >= 60 ? 'text-yellow-700' : 'text-red-700'}`}>
-                          ATS score: {atsScore}/100
-                        </span>
+                    <div className="space-y-2 text-sm text-blue-900">
+                      <div className="flex gap-4">
+                        {atsScore !== null && (
+                          <span className={`font-semibold ${atsScore >= 80 ? 'text-green-700' : atsScore >= 60 ? 'text-yellow-700' : 'text-red-700'}`}>
+                            ATS score: {atsScore}/100
+                          </span>
+                        )}
+                        {overallScore !== null && <span>Overall: <strong>{overallScore}</strong></span>}
+                      </div>
+                      {lastAnalysis?.whyThisScore && (
+                        <p className="text-xs text-blue-800/80">{lastAnalysis.whyThisScore}</p>
                       )}
-                      {overallScore !== null && <span>Overall: <strong>{overallScore}</strong></span>}
+                      {lastAnalysis?.isValidCV === false && (
+                        <p className="text-xs font-medium text-red-700">
+                          Not scored as a resume — upload a CV with experience, skills, and education.
+                        </p>
+                      )}
                     </div>
                   </>
                 ) : (
@@ -1037,20 +1585,15 @@ export default function EnhanceCVPage() {
             </div>
           )}
 
-          {enhancedCV && (
+          {enhancedData && (
             <div className="mt-8 pt-8 border-t border-border">
               <h2 className="text-xl font-semibold text-primary mb-4">ATS-Optimized Preview</h2>
               
               <div className="mb-4 p-4 bg-green-50 border border-green-300 rounded-lg">
-                <h3 className="font-semibold text-green-900 mb-2">✓ ATS Optimization Applied</h3>
-                <ul className="text-sm text-green-800 space-y-1">
-                  <li>• Standard section headings (Professional Summary, Work Experience, Skills, Education)</li>
-                  <li>• Plain text formatting - no special characters or complex tables</li>
-                  <li>• Simple bullet points using hyphens (-) for maximum compatibility</li>
-                  <li>• Clean fonts (Helvetica) that all ATS systems can parse</li>
-                  <li>• Black text for optimal readability by ATS software</li>
-                  <li>• Keyword-optimized content based on your industry</li>
-                </ul>
+                <h3 className="font-semibold text-green-900 mb-2">Enhanced preview</h3>
+                <p className="text-sm text-green-800">
+                  Edits are based on your original CV. Re-analyze after changes to see your real ATS score — scores are never inflated.
+                </p>
               </div>
 
               <div className="flex flex-wrap gap-3 mb-4">
@@ -1111,8 +1654,12 @@ export default function EnhanceCVPage() {
                           <input 
                             className="outline-none bg-transparent" 
                             placeholder="Phone" 
-                            value={lastAnalysis?.phone || ''} 
-                            onChange={(e)=> setLastAnalysis({ ...lastAnalysis, phone: e.target.value })} 
+                            value={enhancedData?.phone || lastAnalysis?.phone || ''} 
+                            onChange={(e)=> {
+                              const phone = e.target.value
+                              setLastAnalysis({ ...lastAnalysis, phone })
+                              setEnhancedData({ ...(enhancedData || {}), phone })
+                            }} 
                           />
                         </div>
                         <div>
@@ -1120,8 +1667,12 @@ export default function EnhanceCVPage() {
                           <input 
                             className="outline-none bg-transparent" 
                             placeholder="Email" 
-                            value={lastAnalysis?.email || ''} 
-                            onChange={(e)=> setLastAnalysis({ ...lastAnalysis, email: e.target.value })} 
+                            value={enhancedData?.email || lastAnalysis?.email || ''} 
+                            onChange={(e)=> {
+                              const email = e.target.value
+                              setLastAnalysis({ ...lastAnalysis, email })
+                              setEnhancedData({ ...(enhancedData || {}), email })
+                            }} 
                           />
                         </div>
                         <div>
@@ -1129,8 +1680,12 @@ export default function EnhanceCVPage() {
                           <input 
                             className="outline-none bg-transparent w-3/4" 
                             placeholder="Address" 
-                            value={lastAnalysis?.address || ''} 
-                            onChange={(e)=> setLastAnalysis({ ...lastAnalysis, address: e.target.value })} 
+                            value={enhancedData?.address || lastAnalysis?.address || ''} 
+                            onChange={(e)=> {
+                              const address = e.target.value
+                              setLastAnalysis({ ...lastAnalysis, address })
+                              setEnhancedData({ ...(enhancedData || {}), address })
+                            }} 
                           />
                         </div>
                         <div>
@@ -1138,8 +1693,12 @@ export default function EnhanceCVPage() {
                           <input 
                             className="outline-none bg-transparent w-3/4" 
                             placeholder="LinkedIn" 
-                            value={lastAnalysis?.linkedin || ''} 
-                            onChange={(e)=> setLastAnalysis({ ...lastAnalysis, linkedin: e.target.value })} 
+                            value={enhancedData?.linkedin || lastAnalysis?.linkedin || ''} 
+                            onChange={(e)=> {
+                              const linkedin = e.target.value
+                              setLastAnalysis({ ...lastAnalysis, linkedin })
+                              setEnhancedData({ ...(enhancedData || {}), linkedin })
+                            }} 
                           />
                         </div>
                       </div>
@@ -1233,7 +1792,7 @@ export default function EnhanceCVPage() {
                             <input 
                               className="outline-none border rounded px-2 py-1" 
                               placeholder="Company" 
-                              value={exp.company}
+                              value={exp.company ?? ''}
                               onChange={(e)=>{
                                 const next = [...enhancedData.experienceEntries]
                                 next[idx] = { ...exp, company: e.target.value }
@@ -1243,7 +1802,7 @@ export default function EnhanceCVPage() {
                             <input 
                               className="outline-none border rounded px-2 py-1" 
                               placeholder="Job Title" 
-                              value={exp.title}
+                              value={exp.title ?? ''}
                               onChange={(e)=>{
                                 const next = [...enhancedData.experienceEntries]
                                 next[idx] = { ...exp, title: e.target.value }
@@ -1253,7 +1812,7 @@ export default function EnhanceCVPage() {
                             <input 
                               className="outline-none border rounded px-2 py-1" 
                               placeholder="Period (e.g., Jan 2024 – Present)" 
-                              value={exp.period}
+                              value={exp.period ?? ''}
                               onChange={(e)=>{
                                 const next = [...enhancedData.experienceEntries]
                                 next[idx] = { ...exp, period: e.target.value }
@@ -1263,7 +1822,7 @@ export default function EnhanceCVPage() {
                             <input 
                               className="outline-none border rounded px-2 py-1" 
                               placeholder="Location" 
-                              value={exp.location}
+                              value={exp.location ?? ''}
                               onChange={(e)=>{
                                 const next = [...enhancedData.experienceEntries]
                                 next[idx] = { ...exp, location: e.target.value }
@@ -1279,7 +1838,7 @@ export default function EnhanceCVPage() {
                                   <span>-</span>
                                   <input 
                                     className="flex-1 outline-none" 
-                                    value={b} 
+                                    value={b ?? ''} 
                                     onChange={(e)=>{
                                       const next = [...enhancedData.experienceEntries]
                                       const xb = [...(exp.bullets||[])]
@@ -1518,9 +2077,9 @@ export default function EnhanceCVPage() {
           onClick={()=>{
             const currentData = enhancedData || {}
             // Get existing education from either enhancedData or lastAnalysis
-            let currentEdu = Array.isArray(currentData.education) 
-              ? currentData.education 
-              : (lastAnalysis?.education ? toArray(lastAnalysis.education) : [])
+            const currentEdu = normalizeEducationList(
+              currentData.education?.length ? currentData.education : lastAnalysis?.education
+            )
             setEnhancedData({ ...currentData, education: [...currentEdu, ""] })
           }}
         >
@@ -1536,9 +2095,9 @@ export default function EnhanceCVPage() {
       style={{ borderColor: '#000000' }}
     >
       {(() => {
-        const eduList = Array.isArray(enhancedData?.education) 
-          ? enhancedData.education 
-          : (lastAnalysis?.education ? toArray(lastAnalysis.education) : [])
+        const eduList = normalizeEducationList(
+          enhancedData?.education?.length ? enhancedData.education : lastAnalysis?.education
+        )
         
         return eduList.map((eItem: string, idx: number) => (
           <li key={idx} className="flex gap-2 items-center">
@@ -1549,9 +2108,10 @@ export default function EnhanceCVPage() {
               placeholder="Degree, Institution, Year"
               onChange={(e)=>{
                 const currentData = enhancedData || {}
-                let currentEdu = Array.isArray(currentData.education) 
-                  ? [...currentData.education] 
-                  : (lastAnalysis?.education ? [...toArray(lastAnalysis.education)] : [])
+                let currentEdu = normalizeEducationList(
+                  currentData.education?.length ? currentData.education : lastAnalysis?.education
+                )
+                currentEdu = [...currentEdu]
                 currentEdu[idx] = e.target.value
                 setEnhancedData({ ...currentData, education: currentEdu })
               }}
@@ -1562,9 +2122,10 @@ export default function EnhanceCVPage() {
               className="text-red-500 hover:text-red-700 p-1 h-6"
               onClick={()=>{
                 const currentData = enhancedData || {}
-                let currentEdu = Array.isArray(currentData.education) 
-                  ? [...currentData.education] 
-                  : (lastAnalysis?.education ? [...toArray(lastAnalysis.education)] : [])
+                let currentEdu = normalizeEducationList(
+                  currentData.education?.length ? currentData.education : lastAnalysis?.education
+                )
+                currentEdu = [...currentEdu]
                 currentEdu.splice(idx, 1)
                 setEnhancedData({ ...currentData, education: currentEdu })
               }}
@@ -1575,9 +2136,9 @@ export default function EnhanceCVPage() {
         ))
       })()}
       {(() => {
-        const eduList = Array.isArray(enhancedData?.education) 
-          ? enhancedData.education 
-          : (lastAnalysis?.education ? toArray(lastAnalysis.education) : [])
+        const eduList = normalizeEducationList(
+          enhancedData?.education?.length ? enhancedData.education : lastAnalysis?.education
+        )
         return eduList.length === 0 && (
           <li className="text-gray-400 text-sm">No education added yet. Click "Add Education" to start.</li>
         )
