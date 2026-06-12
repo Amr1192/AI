@@ -6,21 +6,6 @@ export const authService = {
   // 🔹 AUTHENTICATION
   // ============================
 
-  // Register User
-  register: async (userData: any) => {
-    try {
-      const response = await axios.post(`${API_URL}/register`, userData);
-      if (response.data.access_token) {
-        localStorage.setItem("cvmaster_user", JSON.stringify(response.data.user));
-        localStorage.setItem("cvmaster_token", response.data.access_token);
-        localStorage.setItem("token", response.data.access_token); // Backward compatibility
-      }
-      return response.data;
-    } catch (error: any) {
-      throw error.response?.data || error.message;
-    }
-  },
-
   // Login User
   login: async (credentials: any) => {
     try {

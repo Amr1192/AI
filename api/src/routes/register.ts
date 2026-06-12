@@ -255,51 +255,6 @@ export async function registerRoutes(app: FastifyInstance): Promise<void> {
     });
 
     // ----- auth (public) -----
-    api.post('/register', async (request, reply) => {
-      const body = request.body as {
-        name?: string;
-        email?: string;
-        password?: string;
-        password_confirmation?: string;
-      };
-      if (!body.name || !body.email || !body.password) {
-        return reply.code(422).send({ name: ['Required fields missing'] });
-      }
-      if (body.password.length < 8) {
-        return reply.code(422).send({ password: ['Password must be at least 8 characters'] });
-      }
-      if (body.password_confirmation && body.password !== body.password_confirmation) {
-        return reply.code(422).send({ password: ['Password confirmation does not match'] });
-      }
-      const exists = await prisma.user.findFirst({
-        where: { OR: [{ email: body.email }, { name: body.name }] },
-      });
-      if (exists) {
-        return reply.code(422).send({
-          email: exists.email === body.email ? ['The email has already been taken.'] : undefined,
-          name: exists.name === body.name ? ['The name has already been taken.'] : undefined,
-        });
-      }
-      const user = await prisma.user.create({
-        data: {
-          name: body.name,
-          email: body.email,
-          password: await hashPassword(body.password),
-          role: 'user',
-          profile: { create: {} },
-        },
-      });
-      const token = await createAccessToken(user.id);
-      return reply.code(201).send(
-        serialize({
-          message: 'User registered successfully',
-          user: sanitizeUser(user),
-          access_token: token,
-          token_type: 'Bearer',
-        }),
-      );
-    });
-
     api.post('/login', async (request, reply) => {
       const body = request.body as { email?: string; password?: string };
       if (!body.email || !body.password) {

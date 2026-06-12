@@ -214,11 +214,6 @@ export default function Header() {
                     <Link href="/login" onClick={() => setMobileOpen(false)} className="mt-4">
                       <Button className="w-full">Sign In</Button>
                     </Link>
-                    <Link href="/register" onClick={() => setMobileOpen(false)}>
-                      <Button variant="outline" className="mt-2 w-full">
-                        Create Account
-                      </Button>
-                    </Link>
                   </>
                 )}
               </div>

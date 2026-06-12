@@ -1,6 +1,3 @@
-import { Button } from "@/components/ui/button"
-import Link from "next/link"
-
 export default function Features() {
   const features = [
     {
@@ -36,10 +33,7 @@ export default function Features() {
           >
             <div className={feature.reverse ? "md:col-start-2" : ""}>
               <h3 className="text-3xl font-bold text-[#1a1a3e] mb-6">{feature.title}</h3>
-              <p className="text-gray-600 text-lg mb-8 leading-relaxed">{feature.description}</p>
-              <Link href="/register">
-                <Button className="bg-[#1a1a3e] hover:bg-[#0f0f2e] text-white px-8 py-6">Learn More</Button>
-              </Link>
+              <p className="text-gray-600 text-lg leading-relaxed">{feature.description}</p>
             </div>
             <div className={feature.reverse ? "md:col-start-1" : ""}>
               <div className="bg-gradient-to-br from-purple-100 to-purple-50 rounded-2xl overflow-hidden">

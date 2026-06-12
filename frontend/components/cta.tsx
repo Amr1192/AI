@@ -30,7 +30,7 @@ export default function CTA() {
           Start your journey today!
         </p>
         {!isLoggedIn ? (
-          <Link href="/login?mode=signup">
+          <Link href="/login">
             <Button size="lg" className="bg-accent px-8 py-6 text-lg text-accent-foreground hover:bg-accent/90">
               Get Started Free
             </Button>

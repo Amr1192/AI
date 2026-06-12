@@ -62,7 +62,7 @@ export default function Hero() {
 
             <div className="flex flex-col gap-3 sm:flex-row">
               {!isLoggedIn && (
-                <Link href="/login?mode=signup">
+                <Link href="/login">
                   <Button size="lg" className="w-full gap-2 px-8 shadow-md sm:w-auto">
                     Get Started Free
                     <ArrowRight className="h-4 w-4" />
