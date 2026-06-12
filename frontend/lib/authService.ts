@@ -24,7 +24,7 @@ export const authService = {
   // Login User
   login: async (credentials: any) => {
     try {
-      const response = await axios.post(`${API_URL}/login`, credentials);
+      const response = await axios.post(`${API_URL}/login`, credentials, { timeout: 15000 });
       if (response.data.access_token) {
         localStorage.setItem("cvmaster_user", JSON.stringify(response.data.user));
         localStorage.setItem("cvmaster_token", response.data.access_token);
@@ -413,35 +413,19 @@ export const authService = {
 
   createCompany: async (companyData: any) => {
     const token = localStorage.getItem("cvmaster_token") || localStorage.getItem("token");
-    const isForm = companyData instanceof FormData;
 
     const res = await axios.post(`${API_URL}/admin/companies`, companyData, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(isForm ? { "Content-Type": "multipart/form-data" } : {}),
-      },
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     return res.data.data ?? res.data;
   },
 
-  updateCompany: async (id: number, data: any) => {
+  updateCompany: async (id: number | string, data: any) => {
     const token = localStorage.getItem("cvmaster_token") || localStorage.getItem("token");
-    let payload = data;
 
-    if (data instanceof FormData) {
-      payload.append("_method", "PUT");
-    } else {
-      payload = { ...data, _method: "PUT" };
-    }
-
-    const isForm = payload instanceof FormData;
-
-    const res = await axios.post(`${API_URL}/admin/companies/${id}`, payload, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        ...(isForm ? { "Content-Type": "multipart/form-data" } : {}),
-      },
+    const res = await axios.put(`${API_URL}/admin/companies/${id}`, data, {
+      headers: { Authorization: `Bearer ${token}` },
     });
 
     return res.data.data ?? res.data;

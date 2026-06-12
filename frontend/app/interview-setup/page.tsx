@@ -68,6 +68,15 @@ export default function InterviewSetupPage() {
   }, [router]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("ended") === "early") {
+      toast.info("Interview ended early — no report was generated. Answer at least one question next time to unlock feedback.");
+      router.replace("/interview-setup");
+    }
+  }, [router]);
+
+  useEffect(() => {
     if (userId) {
       loadSkills();
     }

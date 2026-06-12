@@ -1,0 +1,230 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  name            String    @unique
+  email           String    @unique
+  role            String    @default("user")
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  password        String
+  rememberToken   String?   @map("remember_token")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  profile         Profile?
+  education       Education[]
+  workExperiences WorkExperience[]
+  skills          UserSkill[]
+  jobApplications JobApplication[]
+  interviews      Interview[]
+  userCvs         UserCv[]
+
+  @@map("users")
+}
+
+model Profile {
+  id                    BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  userId                BigInt    @unique @map("user_id") @db.UnsignedBigInt
+  phoneNumber           String?   @map("phone_number")
+  location              String?
+  professionalBio       String?   @map("professional_bio") @db.Text
+  yearsOfExperience     Int       @default(0) @map("years_of_experience")
+  profilePicture        String?   @map("profile_picture")
+  cvJson                Json?     @map("cv_json")
+  embedding             Json?
+  embeddingText         String?   @map("embedding_text") @db.Text
+  embeddingGeneratedAt  DateTime? @map("embedding_generated_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("profiles")
+}
+
+model Company {
+  id          BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  name        String
+  location    String
+  description String?  @db.Text
+  website     String?
+  logo        String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  jobs Job[]
+
+  @@map("companies")
+}
+
+model Job {
+  id                   BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  companyId            BigInt    @map("company_id") @db.UnsignedBigInt
+  title                String
+  description          String    @db.Text
+  requirements         String    @db.Text
+  location             String
+  type                 String
+  salaryFrom           Decimal?  @map("salary_from") @db.Decimal(10, 2)
+  salaryTo             Decimal?  @map("salary_to") @db.Decimal(10, 2)
+  deadline             DateTime? @db.Date
+  isActive             Boolean   @default(true) @map("is_active")
+  embedding            Json?
+  embeddingText        String?   @map("embedding_text") @db.Text
+  embeddingGeneratedAt DateTime? @map("embedding_generated_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  company      Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  applications JobApplication[]
+
+  @@map("jobs")
+}
+
+model JobApplication {
+  id          BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  userId      BigInt   @map("user_id") @db.UnsignedBigInt
+  jobId       BigInt   @map("job_id") @db.UnsignedBigInt
+  status      String   @default("pending")
+  coverLetter String?  @map("cover_letter") @db.Text
+  cvVersion   String?  @map("cv_version")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  job  Job  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, jobId])
+  @@map("job_applications")
+}
+
+model UserSkill {
+  id                BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  userId            BigInt   @map("user_id") @db.UnsignedBigInt
+  title             String
+  yearsOfExperience Int      @default(0) @map("years_of_experience")
+  proficiencyLevel  String   @default("beginner") @map("proficiency_level")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_skills")
+}
+
+model Education {
+  id           BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  userId       BigInt    @map("user_id") @db.UnsignedBigInt
+  institution  String
+  degree       String
+  fieldOfStudy String    @map("field_of_study")
+  startDate    DateTime  @map("start_date") @db.Date
+  endDate      DateTime? @map("end_date") @db.Date
+  grade        Decimal?  @db.Decimal(4, 2)
+  description  String?   @db.Text
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("education")
+}
+
+model WorkExperience {
+  id          BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  userId      BigInt    @map("user_id") @db.UnsignedBigInt
+  companyName String    @map("company_name")
+  position    String
+  startDate   DateTime  @map("start_date") @db.Date
+  endDate     DateTime? @map("end_date") @db.Date
+  isCurrent   Boolean   @default(false) @map("is_current")
+  location    String?
+  description String?   @db.Text
+  achievements String?  @db.Text
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("work_experiences")
+}
+
+model UserCv {
+  id        BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  userId    BigInt   @map("user_id") @db.UnsignedBigInt
+  title     String?
+  cvJson    Json     @map("cv_json")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_cvs")
+}
+
+model Interview {
+  id                     BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  userId                 BigInt    @map("user_id") @db.UnsignedBigInt
+  selectedSkillIds       Json?     @map("selected_skill_ids")
+  questionSet            Json      @map("question_set")
+  currentQuestion        Int       @default(0) @map("current_question")
+  status                 String    @default("created")
+  feedbackJson           Json?     @map("feedback_json")
+  overall                Json?
+  conversationHistory    Json?     @map("conversation_history")
+  stats                  Json?
+  videoFrames            Json?     @map("video_frames")
+  videoFrameCount        Int       @default(0) @map("video_frame_count")
+  videoAnalysis          Json?     @map("video_analysis")
+  comprehensiveAnalysis  Json?     @map("comprehensive_analysis")
+  analyzedAt             DateTime? @map("analyzed_at")
+  createdAt              DateTime  @default(now()) @map("created_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  user    User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  answers InterviewAnswer[]
+
+  @@map("interviews")
+}
+
+model InterviewAnswer {
+  id                BigInt   @id @default(autoincrement()) @db.UnsignedBigInt
+  interviewId       BigInt   @map("interview_id") @db.UnsignedBigInt
+  questionIndex     Int      @map("question_index")
+  questionText      String   @map("question_text") @db.Text
+  answerText        String   @map("answer_text") @db.Text
+  feedback          Json?
+  modelUsed         String?  @map("model_used")
+  analysisSource    String   @default("ai") @map("analysis_source")
+  verificationToken String?  @map("verification_token")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  interview Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+
+  @@unique([interviewId, questionIndex])
+  @@map("interview_answers")
+}
+
+model PersonalAccessToken {
+  id            BigInt    @id @default(autoincrement()) @db.UnsignedBigInt
+  tokenableType String    @map("tokenable_type")
+  tokenableId   BigInt    @map("tokenable_id") @db.UnsignedBigInt
+  name          String    @db.Text
+  token         String    @unique @db.VarChar(64)
+  abilities     String?   @db.Text
+  lastUsedAt    DateTime? @map("last_used_at")
+  expiresAt     DateTime? @map("expires_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@index([tokenableType, tokenableId])
+  @@map("personal_access_tokens")
+}

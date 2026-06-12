@@ -6,6 +6,7 @@ import { Save, X, Sparkles, Send, Bot, User, Loader2, Wand2, CheckCircle, Circle
 import { toast } from "sonner";
 import FormSection, { CVData as BuilderCVData } from "./components/FormSection";
 import ResumePreview from "./components/ResumePreview";
+import { CV_GENERATOR_API } from "@/lib/api";
 interface Message {
   role: "user" | "assistant";
   content: string;
@@ -64,7 +65,7 @@ const normalizeExperience = (experience: any[]): any[] => {
 export default function CreateCVPage() {
   const STORAGE_VERSION = "2";
   const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
-  const AI_API_BASE = process.env.NEXT_PUBLIC_AI_API_BASE_URL || "http://127.0.0.1:5007";
+  const BUILDER_API = CV_GENERATOR_API;
   
   const [loading, setLoading] = useState(true);
   const [currentStep, setCurrentStep] = useState(1);
@@ -79,7 +80,13 @@ export default function CreateCVPage() {
   const [inputMessage, setInputMessage] = useState("");
   const [isAILoading, setIsAILoading] = useState(false);
   const [aiCVData, setAiCVData] = useState<any>({});
-  const [completion, setCompletion] = useState<{status: CompletionStatus; percentage: number; ready: boolean}>({
+  const [completion, setCompletion] = useState<{
+    status: CompletionStatus;
+    percentage: number;
+    ready: boolean;
+    next_field?: string | null;
+    next_prompt?: string | null;
+  }>({
     status: {} as CompletionStatus,
     percentage: 0,
     ready: false
@@ -185,7 +192,7 @@ export default function CreateCVPage() {
   setIsDownloading(true);
     const toastId = toast.loading("Generating your professional PDF...");
     try {
-      const res = await fetch(`${AI_API_BASE}/ai/generate-pdf`, {
+      const res = await fetch(`${BUILDER_API}/generate-pdf`, {
         method: "POST",
         headers: { 
           "Content-Type": "application/json"
@@ -228,7 +235,7 @@ export default function CreateCVPage() {
     });
     
     try {
-      const res = await fetch(`${AI_API_BASE}/ai/start`, { 
+      const res = await fetch(`${BUILDER_API}/start`, { 
         method: "POST", 
         headers: { "Content-Type": "application/json" } 
       });
@@ -237,7 +244,7 @@ export default function CreateCVPage() {
       if (data.success) {
         setMessages([{ role: "assistant", content: data.message }]);
         if (data.cv_data) setAiCVData(data.cv_data);
-        if (data.completion) setCompletion(data.completion);
+        setCompletion(normalizeCompletion(data.completion, data.cv_data ?? {}));
       }
     } catch (e) {
       setMessages([{ 
@@ -280,7 +287,7 @@ const sendMessage = async () => {
   setIsAILoading(true);
 
   try {
-    const res = await fetch(`${AI_API_BASE}/ai/message`, {
+    const res = await fetch(`${BUILDER_API}/message`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: userMsg, cv_data: aiCVData }),
@@ -296,20 +303,30 @@ const sendMessage = async () => {
           toast.success(`Added: ${addedItems.join(", ")}`);
         }
       }
-      if (data.completion) setCompletion(data.completion); // ✅ This works when backend responds
+      if (data.cv_data) {
+        setCompletion(normalizeCompletion(data.completion, data.cv_data));
+      } else if (data.completion) {
+        setCompletion(normalizeCompletion(data.completion, aiCVData));
+      }
     } else {
       throw new Error(data.error || "Failed to process");
     }
   } catch (e) {
-    // Fallback - try to parse locally
     const localUpdate = parseInputLocally(userMsg, aiCVData);
     setAiCVData(localUpdate);
-    
-    // ✅ ADD THIS: Calculate completion locally when backend fails
     const localCompletion = calculateCompletion(localUpdate);
     setCompletion(localCompletion);
-    
-    setMessages(prev => [...prev, { role: "assistant", content: "Got it! I've added that to your CV. What else would you like to add?" }]);
+
+    const added = getAddedItems(aiCVData, localUpdate);
+    const ack = added.length
+      ? `✅ Added: **${added.join(", ")}**`
+      : "Got it! I've noted that.";
+
+    const nextLine = localCompletion.next_prompt
+      ? `\n\n**Next:** ${localCompletion.next_prompt}`
+      : "\n\nWhat would you like to add next?";
+
+    setMessages(prev => [...prev, { role: "assistant", content: `${ack}${nextLine}` }]);
   } finally { 
     setIsAILoading(false); 
   }
@@ -419,39 +436,66 @@ const parseInputLocally = (input: string, existing: any) => {
   return data;
 };
 
-  const calculateCompletion = (cvData: any) => {
-  const status = {
-    hasName: !!cvData.personalInfo?.fullName,
-    hasEmail: !!cvData.personalInfo?.email,
-    hasPhone: !!cvData.personalInfo?.phone,
-    hasJobTitle: !!cvData.personalInfo?.jobTitle,
-    hasSummary: !!cvData.summary,
-    hasExperience: (cvData.experience?.length || 0) > 0,
-    hasEducation: (cvData.education?.length || 0) > 0,
-    hasSkills: (cvData.skills?.length || 0) > 0,
-    hasProjects: (cvData.projects?.length || 0) > 0,
-    hasAchievements: (cvData.achievements?.length || 0) > 0,
+  const normalizeCompletion = (backend: any, cvData: any) => {
+    const status = {
+      hasName: !!cvData.personalInfo?.fullName,
+      hasEmail: !!cvData.personalInfo?.email,
+      hasPhone: !!cvData.personalInfo?.phone,
+      hasJobTitle: !!cvData.personalInfo?.jobTitle,
+      hasSummary: !!cvData.summary,
+      hasExperience: (cvData.experience?.length || 0) > 0,
+      hasEducation: (cvData.education?.length || 0) > 0,
+      hasSkills: (cvData.skills?.length || 0) > 0,
+      hasProjects: (cvData.projects?.length || 0) > 0,
+      hasAchievements: (cvData.achievements?.length || 0) > 0,
+    };
+    const completed = Object.values(status).filter(Boolean).length;
+    const total = Object.keys(status).length;
+    const percentage =
+      typeof backend?.percentage === "number"
+        ? backend.percentage
+        : Math.round((completed / total) * 100);
+    const coreReady =
+      status.hasName &&
+      status.hasEmail &&
+      status.hasJobTitle &&
+      status.hasExperience &&
+      status.hasEducation &&
+      status.hasSkills;
+
+    const localNext = (() => {
+      if (!status.hasName) return { field: "name", prompt: "**What's your full name?**" };
+      if (!status.hasEmail) return { field: "email", prompt: "**What's your email address?**" };
+      if (!status.hasPhone) return { field: "phone", prompt: "**What's your phone number?**" };
+      if (!status.hasJobTitle) return { field: "job title", prompt: "**What job title are you targeting?**" };
+      if (!status.hasSummary) return { field: "summary", prompt: "**Share a short professional summary** (or say *write one for me*)." };
+      if (!status.hasExperience) return { field: "experience", prompt: "**Tell me about your work experience.**" };
+      if (!status.hasEducation) return { field: "education", prompt: "**What's your education?**" };
+      if (!status.hasSkills) return { field: "skills", prompt: "**What skills should we list?**" };
+      if (!status.hasProjects) return { field: "projects", prompt: "**Any projects?** (optional — say *skip*)" };
+      if (!status.hasAchievements) return { field: "achievements", prompt: "**Any achievements?** (optional — say *skip*)" };
+      return null;
+    })();
+
+    return {
+      status: backend?.status ?? status,
+      completed: backend?.completed ?? completed,
+      total: backend?.total ?? total,
+      percentage,
+      ready: backend?.ready ?? coreReady,
+      next_field: backend?.next_field ?? localNext?.field ?? null,
+      next_prompt: backend?.next_prompt ?? localNext?.prompt ?? null,
+    };
   };
-  
-  const completed = Object.values(status).filter(Boolean).length;
-  const total = Object.keys(status).length;
-  const percentage = Math.round((completed / total) * 100);
-  
-  return {
-    status,
-    completed,
-    total,
-    percentage,
-    ready: percentage >= 30
-  };
-};
+
+  const calculateCompletion = (cvData: any) => normalizeCompletion(null, cvData);
 
   const generateCVFromAI = async () => {
   setIsAILoading(true);
   const toastId = toast.loading("Generating your ATS-optimized CV...");
 
   try {
-    const res = await fetch(`${AI_API_BASE}/ai/generate`, {
+    const res = await fetch(`${BUILDER_API}/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ cv_data: aiCVData }),
@@ -663,12 +707,21 @@ const parseInputLocally = (input: string, existing: any) => {
 
               {/* Input Area */}
               <div className="border-t p-4 space-y-3">
+                {completion.next_field && (
+                  <p className="text-xs text-purple-700 bg-purple-50 rounded-lg px-3 py-2">
+                    Up next: <span className="font-semibold capitalize">{completion.next_field}</span>
+                  </p>
+                )}
                 <div className="flex gap-2">
                   <textarea
                     value={inputMessage}
                     onChange={(e) => setInputMessage(e.target.value)}
                     onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(); }}}
-                    placeholder="Type anything... name, skills, experience, achievements (Enter to send)"
+                    placeholder={
+                      completion.next_field
+                        ? `Enter your ${completion.next_field}... (Enter to send, or paste multiple details)`
+                        : "Type anything... name, skills, experience (Enter to send)"
+                    }
                     className="flex-1 resize-none rounded-xl border border-gray-200 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
                     rows={2}
                   />

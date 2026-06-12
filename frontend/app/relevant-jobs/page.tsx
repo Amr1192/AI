@@ -515,6 +515,7 @@ interface User {
 
 interface Job {
   job_id: number;
+  id?: number | string;
   title: string;
   company: string;
   location: string;
@@ -528,6 +529,43 @@ interface Job {
   requirements: string;
   matched_skills?: string[];
   missing_skills?: string[];
+}
+
+function normalizeRecommendation(raw: Record<string, unknown>): Job {
+  const rawId = raw.job_id ?? raw.id;
+  const jobId = Number(rawId);
+  const similarity = Number(raw.similarity_score ?? raw.similarity ?? 0);
+  const matchPct =
+    raw.match_percentage != null
+      ? Number(raw.match_percentage)
+      : Math.round(similarity * 10000) / 100;
+
+  return {
+    job_id: jobId,
+    id: rawId as number | string,
+    title: String(raw.title ?? ''),
+    company: String(raw.company ?? 'Unknown'),
+    location: String(raw.location ?? ''),
+    type: String(raw.type ?? ''),
+    salary_from: Number(raw.salary_from ?? 0),
+    salary_to: Number(raw.salary_to ?? 0),
+    similarity_score: similarity,
+    match_percentage: matchPct,
+    explanation: String(
+      raw.explanation ??
+        (Array.isArray(raw.matched_skills) && raw.matched_skills.length
+          ? `Matches your skills: ${(raw.matched_skills as string[]).join(', ')}`
+          : 'Matches your profile based on skills and experience.'),
+    ),
+    description: String(raw.description ?? ''),
+    requirements: String(raw.requirements ?? ''),
+    matched_skills: Array.isArray(raw.matched_skills) ? (raw.matched_skills as string[]) : [],
+    missing_skills: Array.isArray(raw.missing_skills) ? (raw.missing_skills as string[]) : [],
+  };
+}
+
+function jobKey(job: Job): string {
+  return String(job.job_id ?? job.id ?? '');
 }
 
 interface ProfileStatus {
@@ -640,12 +678,15 @@ export default function RelevantJobsPage() {
       const data = await response.json();
 
       if (response.ok) {
-        setJobs(data.recommendations || []);
-        setFilteredJobs(data.recommendations || []);
+        const normalized = (data.recommendations || []).map((j: Record<string, unknown>) =>
+          normalizeRecommendation(j),
+        );
+        setJobs(normalized);
+        setFilteredJobs(normalized);
         
         // Show success message with count
-        if (data.recommendations && data.recommendations.length > 0) {
-          setError(""); // Clear any previous errors
+        if (normalized.length > 0) {
+          setError("");
         } else {
           setError("No matching jobs found. Try updating your profile with more details.");
         }
@@ -918,7 +959,7 @@ export default function RelevantJobsPage() {
               {filteredJobs.length > 0 ? (
                 filteredJobs.map((job) => (
                   <div
-                    key={job.job_id}
+                    key={jobKey(job)}
                     className="border border-border rounded-lg p-6 hover:shadow-md transition"
                   >
                     <div className="flex items-start justify-between mb-4">
@@ -930,12 +971,12 @@ export default function RelevantJobsPage() {
                       </div>
                       <div className="text-right">
                         <div className="bg-accent text-white px-3 py-1 rounded-full text-sm font-bold mb-2">
-                          {job.match_percentage.toFixed(0)}% Match
+                          {(job.match_percentage ?? 0).toFixed(0)}% Match
                         </div>
                         <button
-                          onClick={() => toggleSaveJob(job.job_id.toString())}
+                          onClick={() => toggleSaveJob(jobKey(job))}
                           className={`text-2xl ${
-                            savedJobs.includes(job.job_id.toString())
+                            savedJobs.includes(jobKey(job))
                               ? "text-accent"
                               : "text-gray-300"
                           }`}
@@ -967,7 +1008,7 @@ export default function RelevantJobsPage() {
                       <div>
                         <span className="text-muted-foreground">Match Score:</span>
                         <p className="font-medium text-foreground">
-                          {job.similarity_score.toFixed(4)}
+                          {(job.similarity_score ?? 0).toFixed(4)}
                         </p>
                       </div>
                     </div>

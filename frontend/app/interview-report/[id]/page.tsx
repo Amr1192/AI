@@ -29,7 +29,7 @@ import {
   Meh,
   X
 } from "lucide-react";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, apiFetch, readApiError } from "@/lib/api";
 
 const REPORT_CACHE_PREFIX = "interview_report_cache_";
 const ANALYZE_TIMEOUT_MS = 180_000;
@@ -68,19 +68,12 @@ function isDisplayableAnalysis(data: Analysis | null): data is Analysis {
   return false;
 }
 
-async function apiFetch(
+async function fetchInterviewReport(
   url: string,
   options?: RequestInit,
   timeoutMs = 30_000
 ): Promise<Response> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
+  return apiFetch(url, options, timeoutMs);
 }
 
 function formatFetchError(err: unknown): string {
@@ -88,7 +81,7 @@ function formatFetchError(err: unknown): string {
     return "The request timed out. Your report may still be generating — try again in a moment.";
   }
   if (err instanceof TypeError && err.message === "Failed to fetch") {
-    return "Cannot reach the server. Make sure the Laravel backend is running on port 8000, then retry.";
+    return "Cannot reach the server. Make sure the API is running (npm run dev in api/), then retry.";
   }
   if (err instanceof Error) return err.message;
   return "Something went wrong loading your report.";
@@ -182,14 +175,14 @@ export default function InterviewReportPage() {
     }
 
     try {
-      const interviewRes = await apiFetch(
+      const interviewRes = await fetchInterviewReport(
         `${API_BASE}/api/interviews/${interviewId}`,
         undefined,
         30_000
       );
 
       if (!interviewRes.ok) {
-        throw new Error("Failed to load interview from the server.");
+        throw new Error(await readApiError(interviewRes, "Failed to load interview from the server."));
       }
 
       const interviewData = await interviewRes.json();
@@ -222,6 +215,7 @@ export default function InterviewReportPage() {
           setIsAnalyzing(false);
           return;
         }
+        // Stale/incomplete cached analysis on server — regenerate below
       }
 
       if (cached) {
@@ -232,7 +226,7 @@ export default function InterviewReportPage() {
       setIsAnalyzing(true);
       setIsLoading(false);
 
-      const analysisRes = await apiFetch(
+      const analysisRes = await fetchInterviewReport(
         `${API_BASE}/api/interviews/${interviewId}/analyze`,
         { method: "POST" },
         ANALYZE_TIMEOUT_MS
@@ -256,13 +250,20 @@ export default function InterviewReportPage() {
           return;
         }
 
-        throw new Error(errorBody.message || "Analysis failed");
+        throw new Error(
+          errorBody.message || (await readApiError(analysisRes, "Analysis failed"))
+        );
       }
 
       const analysisData = await analysisRes.json();
 
       if (!isDisplayableAnalysis(analysisData.analysis)) {
-        throw new Error("AI analysis was incomplete. Please try again.");
+        setError(
+          "We couldn't build a complete report from this session. Please retry — if it persists, answer at least one full question before finishing."
+        );
+        setIsAnalyzing(false);
+        setIsLoading(false);
+        return;
       }
 
       setAnalysis(analysisData.analysis);

@@ -37,8 +37,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://127.0.0.1:8081";
+import { API_BASE, WS_URL, apiFetch } from "@/lib/api";
+import { MIN_ANSWERS_FOR_REPORT, isReportUnlocked } from "@/lib/interview";
 
 interface Message {
   speaker: 'ai' | 'user';
@@ -62,16 +62,38 @@ interface InterviewStats {
 
 function buildStatsFromMessages(
   messages: Message[],
-  current: InterviewStats
+  current: InterviewStats,
+  agentActions: AgentAction[] = [],
 ): InterviewStats {
-  const answered = messages.filter((m) => m.speaker === "user" && m.text.trim()).length;
+  const userMessages = messages.filter((m) => m.speaker === "user" && m.text.trim());
+  const answeredFromTranscript = userMessages.length;
+  const answeredFromActions = agentActions.filter((a) => a.action === "ask_question").length;
+
+  const answered = Math.max(
+    current.questionsAnswered,
+    answeredFromTranscript,
+    // User spoke at least once after AI asked a question
+    answeredFromActions > 0 && answeredFromTranscript > 0 ? answeredFromTranscript : 0,
+  );
 
   return {
     ...current,
-    questionsAnswered: Math.max(current.questionsAnswered, answered),
-    questionsAsked: Math.max(current.questionsAsked, answered),
+    questionsAnswered: answered,
+    questionsAsked: Math.max(
+      current.questionsAsked,
+      agentActions.filter((a) => a.action === "ask_question").length,
+      answered,
+    ),
     conversationTurns: messages.length,
   };
+}
+
+function countAnsweredQuestions(
+  messages: Message[],
+  stats: InterviewStats,
+  agentActions: AgentAction[] = [],
+): number {
+  return buildStatsFromMessages(messages, stats, agentActions).questionsAnswered;
 }
 
 export default function AgenticInterviewPage() {
@@ -92,6 +114,14 @@ export default function AgenticInterviewPage() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
+  const messagesRef = useRef<Message[]>([]);
+  const interviewStatsRef = useRef<InterviewStats>({
+    questionsAsked: 0,
+    questionsAnswered: 0,
+    topicsCovered: [],
+    conversationTurns: 0,
+  });
+  const agentActionsRef = useRef<AgentAction[]>([]);
 
   // Track if user is manually scrolling
   const [isUserScrolling, setIsUserScrolling] = useState(false);
@@ -183,6 +213,18 @@ export default function AgenticInterviewPage() {
     }
   }, [isMicOn]);
 
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  useEffect(() => {
+    interviewStatsRef.current = interviewStats;
+  }, [interviewStats]);
+
+  useEffect(() => {
+    agentActionsRef.current = agentActions;
+  }, [agentActions]);
+
   // Detect user scrolling
   useEffect(() => {
     const container = transcriptContainerRef.current;
@@ -209,10 +251,14 @@ export default function AgenticInterviewPage() {
     };
   }, []);
 
-  // Auto-scroll only if user isn't manually scrolling
+  // Auto-scroll transcript panel only (avoid shifting the video layout)
   useEffect(() => {
-    if (!isUserScrolling && messages.length > 0) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (!isUserScrolling && messages.length > 0 && transcriptContainerRef.current) {
+      const container = transcriptContainerRef.current;
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: "smooth",
+      });
     }
   }, [messages, isUserScrolling]);
 
@@ -550,11 +596,12 @@ export default function AgenticInterviewPage() {
         handleWebSocketMessage(event.data);
       };
 
-      ws.onerror = (error) => {
+      ws.onerror = () => {
         clearTimeout(timeout);
-        console.error('❌ WebSocket error:', error);
+        const msg = `Cannot connect to interview server at ${WS_URL}. Start the API with: cd api && npm run dev`;
+        console.error('❌ WebSocket error:', msg);
         setConnectionQuality('poor');
-        reject(error);
+        reject(new Error(msg));
       };
 
       ws.onclose = () => {
@@ -611,13 +658,17 @@ export default function AgenticInterviewPage() {
 
         case 'stats_update':
           if (message.stats) {
-            setInterviewStats((prev) => ({
-              ...prev,
-              questionsAsked: Math.max(prev.questionsAsked, message.stats.questionsAsked ?? 0),
-              questionsAnswered: Math.max(prev.questionsAnswered, message.stats.questionsAnswered ?? 0),
-              topicsCovered: message.stats.topicsCovered ?? prev.topicsCovered,
-              conversationTurns: message.stats.conversationTurns ?? prev.conversationTurns,
-            }));
+            setInterviewStats((prev) => {
+              const updated = {
+                ...prev,
+                questionsAsked: Math.max(prev.questionsAsked, message.stats.questionsAsked ?? 0),
+                questionsAnswered: Math.max(prev.questionsAnswered, message.stats.questionsAnswered ?? 0),
+                topicsCovered: message.stats.topicsCovered ?? prev.topicsCovered,
+                conversationTurns: message.stats.conversationTurns ?? prev.conversationTurns,
+              };
+              interviewStatsRef.current = updated;
+              return updated;
+            });
           }
           break;
 
@@ -644,7 +695,9 @@ export default function AgenticInterviewPage() {
         timestamp: new Date()
       }];
 
-      setInterviewStats((stats) => buildStatsFromMessages(next, stats));
+      setInterviewStats((stats) =>
+        buildStatsFromMessages(next, stats, agentActionsRef.current)
+      );
       return next;
     });
   }, []);
@@ -658,15 +711,23 @@ export default function AgenticInterviewPage() {
       timestamp: new Date()
     };
 
-    setAgentActions(prev => [...prev, action]);
+    setAgentActions(prev => {
+      const next = [...prev, action];
+      agentActionsRef.current = next;
+      return next;
+    });
     setCurrentAction(message.action);
 
     if (message.result.count !== undefined || message.result.answered !== undefined) {
-      setInterviewStats(prev => ({
-        ...prev,
-        questionsAsked: Math.max(prev.questionsAsked, message.result.count ?? 0),
-        questionsAnswered: Math.max(prev.questionsAnswered, message.result.answered ?? prev.questionsAnswered),
-      }));
+      setInterviewStats(prev => {
+        const updated = {
+          ...prev,
+          questionsAsked: Math.max(prev.questionsAsked, message.result.count ?? 0),
+          questionsAnswered: Math.max(prev.questionsAnswered, message.result.answered ?? prev.questionsAnswered),
+        };
+        interviewStatsRef.current = updated;
+        return updated;
+      });
     }
 
     if (message.result.topics_covered) {
@@ -704,7 +765,7 @@ export default function AgenticInterviewPage() {
 
     } catch (err: any) {
       console.error('❌ Start interview error:', err);
-      setError(err.message);
+      setError(err?.message || 'Failed to start interview. Ensure the API server is running (npm run dev in api/).');
       setIsLoading(false);
     }
   };
@@ -714,16 +775,20 @@ export default function AgenticInterviewPage() {
     try {
       console.log('💾 Saving conversation history...');
       
-      const conversationHistory = messages.map(msg => ({
+      const conversationHistory = messagesRef.current.map(msg => ({
         timestamp: msg.timestamp.toISOString(),
         speaker: msg.speaker === 'user' ? 'candidate' : 'interviewer',
         message: msg.text,
         metadata: {}
       }));
 
-      const finalStats = buildStatsFromMessages(messages, interviewStats);
+      const finalStats = buildStatsFromMessages(
+        messagesRef.current,
+        interviewStatsRef.current,
+        agentActionsRef.current,
+      );
 
-      const response = await fetch(`${API_BASE}/api/interviews/${interviewId}/save-conversation`, {
+      const response = await apiFetch(`${API_BASE}/api/interviews/${interviewId}/save-conversation`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -733,7 +798,7 @@ export default function AgenticInterviewPage() {
           conversation: conversationHistory,
           stats: finalStats
         })
-      });
+      }, 60_000);
 
       if (!response.ok) {
         throw new Error(`Failed to save conversation: ${response.status}`);
@@ -745,10 +810,16 @@ export default function AgenticInterviewPage() {
       console.error('❌ Failed to save conversation:', err);
       return false;
     }
-  }, [interviewId, messages, interviewStats]);
+  }, [interviewId]);
 
-  // End interview
-  const endInterview = useCallback(async () => {
+  const answeredCount = countAnsweredQuestions(
+    messages,
+    interviewStats,
+    agentActions,
+  );
+  const reportUnlocked = isReportUnlocked(answeredCount);
+
+  const endInterview = useCallback(async (options?: { goToReport: boolean }) => {
     if (isEnding) {
       console.log('⚠️ Already ending interview, ignoring duplicate call');
       return;
@@ -789,59 +860,65 @@ export default function AgenticInterviewPage() {
 
     setIsInterviewActive(false);
 
-    // Save conversation history
-    if (messages.length > 0) {
+    const goToReport = options?.goToReport !== false;
+
+    // Save conversation when there is anything to persist
+    const latestMessages = messagesRef.current;
+    if (latestMessages.length > 0) {
       await saveConversationHistory();
     } else {
       console.log('⚠️ No messages to save');
     }
 
-    // Send video frames if available
-    if (videoFramesRef.current.length > 0) {
-      try {
-        console.log(`📤 Sending ${videoFramesRef.current.length} video frames...`);
-        
-        await fetch(`${API_BASE}/api/interviews/${interviewId}/save-video-frames`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            frames: videoFramesRef.current,
-            frameCount: videoFramesRef.current.length
-          })
-        });
-        
-        console.log('✅ Video frames sent');
-      } catch (err) {
-        console.error('❌ Failed to send video frames:', err);
-      }
+    if (!goToReport) {
+      router.push("/interview-setup?ended=early");
+      return;
     }
 
-    // Navigate to report
     const reportUrl = `/interview-report/${interviewId}`;
     console.log('📍 Navigating to:', reportUrl);
-    
     router.push(reportUrl);
-  }, [isEnding, interviewId, router, messages, saveConversationHistory]);
+
+    // Upload video frames in background (large payload — must not block report)
+    const frames = [...videoFramesRef.current];
+    if (frames.length > 0) {
+      void (async () => {
+        try {
+          console.log(`📤 Sending ${frames.length} video frames in background...`);
+          await apiFetch(`${API_BASE}/api/interviews/${interviewId}/save-video-frames`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ frames, frameCount: frames.length }),
+          }, 120_000);
+          console.log('✅ Video frames sent');
+        } catch (err) {
+          console.error('❌ Failed to send video frames:', err);
+        }
+      })();
+    }
+  }, [isEnding, interviewId, router, saveConversationHistory]);
 
   const requestEndInterview = useCallback(() => {
     if (isEnding) {
       return;
     }
 
-    const answered = buildStatsFromMessages(messages, interviewStats).questionsAnswered;
-    if (answered < 1) {
+    const answered = countAnsweredQuestions(
+      messagesRef.current,
+      interviewStatsRef.current,
+      agentActionsRef.current,
+    );
+    if (answered < MIN_ANSWERS_FOR_REPORT) {
       setShowEndConfirm(true);
       return;
     }
 
-    endInterview();
-  }, [isEnding, messages, interviewStats, endInterview]);
+    endInterview({ goToReport: true });
+  }, [isEnding, endInterview]);
 
   const confirmEndInterview = useCallback(() => {
     setShowEndConfirm(false);
-    endInterview();
+    endInterview({ goToReport: false });
   }, [endInterview]);
 
   // Toggle controls
@@ -986,16 +1063,34 @@ export default function AgenticInterviewPage() {
                 Interview Progress
               </h3>
               <div className="space-y-3">
-                <div className="rounded-xl border border-purple-100 bg-purple-50 p-4">
+                <div
+                  className={`rounded-xl border p-4 ${
+                    reportUnlocked
+                      ? "border-green-200 bg-green-50"
+                      : "border-purple-100 bg-purple-50"
+                  }`}
+                >
                   <div className="flex justify-between text-sm mb-1">
                     <span>Questions Answered</span>
-                    <span className="font-semibold text-purple-700">
-                      {interviewStats.questionsAnswered}
+                    <span
+                      className={`font-semibold ${
+                        reportUnlocked ? "text-green-700" : "text-purple-700"
+                      }`}
+                    >
+                      {answeredCount} / {MIN_ANSWERS_FOR_REPORT}
                     </span>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    Open practice — continue as long as you like. Report unlocks after 1 answer.
-                  </p>
+                  {reportUnlocked ? (
+                    <p className="text-xs text-green-800 flex items-center gap-1.5 mt-2">
+                      <CheckCircle className="h-3.5 w-3.5 shrink-0" />
+                      Report unlocked — you can finish anytime to see your feedback.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Answer at least {MIN_ANSWERS_FOR_REPORT} question
+                      {MIN_ANSWERS_FOR_REPORT === 1 ? "" : "s"} to unlock your report.
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
@@ -1084,10 +1179,25 @@ export default function AgenticInterviewPage() {
         </aside>
 
         {/* Main Content */}
-        <main className="flex-1 p-6 grid grid-cols-3 gap-6 overflow-hidden">
-          {/* Video Section */}
-          <div className="col-span-2 flex flex-col">
-            <div className="bg-gray-900 rounded-xl flex-1 flex flex-col justify-center items-center relative overflow-hidden">
+        <main className="flex-1 p-6 grid grid-cols-3 gap-6 overflow-hidden min-h-0">
+          {/* Video Section — fixed aspect so transcript/question length never shrinks the feed */}
+          <div className="col-span-2 flex flex-col min-h-0 gap-4">
+            <div className="relative aspect-video w-full max-h-[min(52vh,560px)] shrink-0 overflow-hidden rounded-xl bg-gray-900">
+              {isInterviewActive && reportUnlocked && (
+                <div className="absolute top-4 right-4 z-20 max-w-xs rounded-lg bg-green-600/95 px-3 py-2 text-xs text-white shadow-lg backdrop-blur-sm">
+                  <div className="flex items-center gap-2 font-semibold">
+                    <CheckCircle className="h-4 w-4 shrink-0" />
+                    Report ready when you finish
+                  </div>
+                </div>
+              )}
+
+              {isInterviewActive && !reportUnlocked && (
+                <div className="absolute top-4 right-4 z-20 max-w-xs rounded-lg bg-amber-600/95 px-3 py-2 text-xs text-white shadow-lg backdrop-blur-sm">
+                  Answer 1 question to unlock your report
+                </div>
+              )}
+
               {interviewStats.questionsAnswered > 0 && (
                 <div className="absolute top-4 left-4 z-10 rounded-full bg-black/50 px-3 py-1 text-sm text-white backdrop-blur-sm">
                   {interviewStats.questionsAnswered} answered
@@ -1109,7 +1219,7 @@ export default function AgenticInterviewPage() {
                 autoPlay
                 playsInline
                 muted
-                className="w-full h-full object-cover"
+                className="absolute inset-0 h-full w-full object-cover scale-x-[-1]"
                 onLoadedMetadata={(e) => {
                   console.log('📹 Video metadata loaded');
                   const video = e.currentTarget;
@@ -1234,9 +1344,9 @@ export default function AgenticInterviewPage() {
             </div>
 
             {/* Current Question Display */}
-            <Card className="mt-4 p-4">
-              <h3 className="font-semibold text-lg mb-2">Current Question:</h3>
-              <p className="text-muted-foreground leading-relaxed">
+            <Card className="shrink-0 p-4 max-h-36 overflow-y-auto">
+              <h3 className="font-semibold text-lg mb-2 sticky top-0 bg-card">Current Question:</h3>
+              <p className="text-muted-foreground leading-relaxed break-words">
                 {messages.length > 0 && messages[messages.length - 1].speaker === 'ai'
                   ? messages[messages.length - 1].text
                   : 'Waiting for AI interviewer...'}
@@ -1245,7 +1355,7 @@ export default function AgenticInterviewPage() {
 
             {/* End Interview Button */}
             {isInterviewActive && (
-              <div className="mt-4 flex gap-3">
+              <div className="shrink-0 flex gap-3">
                 <Button
                   onClick={requestEndInterview}
                   disabled={isEnding}
@@ -1255,12 +1365,17 @@ export default function AgenticInterviewPage() {
                   {isEnding ? (
                     <>
                       <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                      Saving & Generating Report...
+                      Saving...
                     </>
-                  ) : (
+                  ) : reportUnlocked ? (
                     <>
                       <CheckCircle className="mr-2 h-5 w-5" />
                       Finish & See Report
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle className="mr-2 h-5 w-5" />
+                      End Early (No Report)
                     </>
                   )}
                 </Button>
@@ -1279,7 +1394,7 @@ export default function AgenticInterviewPage() {
           </div>
 
           {/* Live Transcript Panel */}
-          <aside className="bg-card rounded-xl p-6 flex flex-col overflow-hidden border border-border">
+          <aside className="bg-card rounded-xl p-6 flex flex-col overflow-hidden border border-border min-h-0 max-h-full">
             <div className="flex items-center gap-2 mb-4">
               <MessageSquare className="h-5 w-5 text-primary" />
               <h3 className="text-lg font-bold">Live Transcript</h3>
@@ -1317,7 +1432,7 @@ export default function AgenticInterviewPage() {
                           {msg.timestamp.toLocaleTimeString()}
                         </span>
                       </div>
-                      <p className="text-base leading-relaxed">{msg.text}</p>
+                      <p className="text-base leading-relaxed break-words whitespace-pre-wrap">{msg.text}</p>
                     </div>
                   </div>
                 ))
@@ -1335,8 +1450,8 @@ export default function AgenticInterviewPage() {
               End interview early?
             </AlertDialogTitle>
             <AlertDialogDescription className="text-slate-600">
-              You have not answered any interview questions yet, so no report will
-              be available. End the interview anyway?
+              You haven&apos;t answered a question yet, so no report will be generated.
+              End the interview and return to setup?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter className="gap-2 sm:gap-2">
@@ -1347,7 +1462,7 @@ export default function AgenticInterviewPage() {
               onClick={confirmEndInterview}
               className="bg-gradient-to-br from-purple-400 to-purple-600 hover:from-purple-500 hover:to-purple-700 text-white rounded-xl border-0"
             >
-              End Anyway
+              End Without Report
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

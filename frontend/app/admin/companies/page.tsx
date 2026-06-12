@@ -26,6 +26,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { authService } from "@/lib/authService";
+import { API_BASE } from "@/lib/api";
 import { motion } from "framer-motion";
 import {
   Globe,
@@ -37,6 +38,12 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+
+function companyLogoUrl(logo: File | string | null | undefined): string | null {
+  if (!logo || logo instanceof File) return null;
+  if (logo.startsWith("http")) return logo;
+  return `${API_BASE}/${logo.replace(/^\//, "")}`;
+}
 
 export default function CompaniesPage() {
   const router = useRouter();
@@ -249,10 +256,23 @@ export default function CompaniesPage() {
               {/* Main card */}
               <Card className="relative bg-white/90 backdrop-blur-lg border border-purple-200 rounded-3xl shadow-xl hover:shadow-2xl transition-all duration-300 transform hover:-translate-y-2 p-6">
                 <CardHeader className="p-0 mb-4">
-                  <h2 className="text-2xl font-bold text-slate-800 mb-2 flex items-center gap-2">
-                    <span className="bg-gradient-to-br from-purple-400 to-purple-600 w-2 h-2 rounded-full animate-pulse"></span>
-                    {c.name}
-                  </h2>
+                  <div className="flex items-start gap-3 mb-2">
+                    {companyLogoUrl(c.logo) ? (
+                      <img
+                        src={companyLogoUrl(c.logo)!}
+                        alt={`${c.name} logo`}
+                        className="h-12 w-12 rounded-xl object-cover border border-purple-100 shrink-0"
+                      />
+                    ) : (
+                      <div className="h-12 w-12 rounded-xl bg-purple-50 border border-purple-100 flex items-center justify-center shrink-0">
+                        <Building2 size={22} className="text-purple-500" />
+                      </div>
+                    )}
+                    <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
+                      <span className="bg-gradient-to-br from-purple-400 to-purple-600 w-2 h-2 rounded-full animate-pulse"></span>
+                      {c.name}
+                    </h2>
+                  </div>
                   <div className="h-1 w-16 bg-gradient-to-br from-purple-400 to-purple-600 rounded-full"></div>
                 </CardHeader>
 
@@ -376,14 +396,31 @@ hover:bg-red-700 transition-all duration-300 shadow-lg hover:shadow-xl"
               )}
             </div>
 
-            <Input
-              type="file"
-              accept="image/*"
-              onChange={(e) =>
-                setFormData({ ...formData, logo: e.target.files?.[0] || null })
-              }
-              className="h-auto min-h-12 w-full bg-purple-50 border-2 border-purple-200 text-slate-800 px-4 py-2 rounded-xl transition-all file:mr-4 file:h-auto file:cursor-pointer file:rounded-lg file:border-0 file:bg-gradient-to-br file:from-purple-400 file:to-purple-600 file:px-4 file:py-2.5 file:text-sm file:font-medium file:text-white hover:file:opacity-90"
-            />
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-slate-700">Company logo (optional)</p>
+              <p className="text-xs text-slate-500">
+                Upload a square image (PNG/JPG). It appears on the company card and job listings.
+              </p>
+              {(formData.logo instanceof File || companyLogoUrl(formData.logo)) && (
+                <img
+                  src={
+                    formData.logo instanceof File
+                      ? URL.createObjectURL(formData.logo)
+                      : companyLogoUrl(formData.logo)!
+                  }
+                  alt="Logo preview"
+                  className="h-16 w-16 rounded-xl object-cover border border-purple-100"
+                />
+              )}
+              <Input
+                type="file"
+                accept="image/*"
+                onChange={(e) =>
+                  setFormData({ ...formData, logo: e.target.files?.[0] || null })
+                }
+                className="h-auto min-h-12 w-full bg-purple-50 border-2 border-purple-200 text-slate-800 px-4 py-2 rounded-xl transition-all file:mr-4 file:h-auto file:cursor-pointer file:rounded-lg file:border-0 file:bg-gradient-to-br file:from-purple-400 file:to-purple-600 file:px-4 file:py-2.5 file:text-sm file:font-medium file:text-white hover:file:opacity-90"
+              />
+            </div>
 
             <div className="flex gap-4 pt-4">
               <Button

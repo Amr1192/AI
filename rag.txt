@@ -1,6 +1,0 @@
-php artisan embeddings:generate all
-# or force incomplete profiles:
-php artisan embeddings:generate profiles --force
-to index existing data
-
-in the .env in the backend # set true for RAG_EXPLANATIONS GPT explanations (slower)
